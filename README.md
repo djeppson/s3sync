@@ -26,7 +26,7 @@ Someday features:
 
 - [ ] Handy-dandy way to run as a background service on start-up
 - [ ] Validate bucket access on start-up
-- [ ] Arg for recursion
+- [x] Arg for recursion
 - [ ] Arg for key prefix
 - [ ] AWS Cognito and/or AWS IAM Identity Center integration
 

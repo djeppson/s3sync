@@ -27,6 +27,9 @@ pub struct Cli {
     // AWS region
     #[arg(long)]
     region: String,
+    // Recursively sync the path
+    #[arg(short, long)]
+    recursive: bool,
 }
 
 impl Cli {
@@ -65,9 +68,14 @@ async fn main() -> Result<(), anyhow::Error> {
     // Setup the channel and simple debouncer
     let (tx, rx) = std::sync::mpsc::channel();
     let mut debouncer = notify_debouncer_mini::new_debouncer(Duration::from_secs(3), tx).unwrap();
+    let recursive_mode = if cli.recursive {
+        notify::RecursiveMode::Recursive
+    } else {
+        notify::RecursiveMode::NonRecursive
+    };
     debouncer
         .watcher()
-        .watch(&cli.path, notify::RecursiveMode::NonRecursive)
+        .watch(&cli.path, recursive_mode)
         .unwrap();
 
     // Setup S3
