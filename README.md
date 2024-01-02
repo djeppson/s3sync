@@ -1,6 +1,15 @@
 ## s3sync - a super basic S3 sync utility
-
 Hobby project for playing with Rust.  You should probably use AWS's CLI `aws s3 sync` instead.
+
+## Why
+Prior solution was running this little gem: 
+```
+aws s3 mv /example/source/folder/ s3://my-great-bucket/ --profile foo --recursive --exclude "*" --include "example*.csv"
+```
+
+Issues:
+* Had to wait for up to a minute for the cron schedule to kick-off, why wait?!
+* I didn't build it and I wanted to build a thing
 
 
 Example: 
