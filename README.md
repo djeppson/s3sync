@@ -1,0 +1,25 @@
+## s3sync - a super basic S3 sync utility
+
+Hobby project for playing with Rust.  You should probably use AWS's CLI `aws s3 sync` instead.
+
+
+Example: 
+```
+s3sync \
+    --path ~/Downloads \
+    --pattern "Pictures[0-9]{8}.jpg" \
+    --bucket my-awesome-pics \
+    --profile picapp \
+    --region us-east-1
+```
+
+Someday features:
+
+- [ ] Handy-dandy way to run as a background service on start-up
+- [ ] Validate bucket access on start-up
+- [ ] Arg for recursion
+- [ ] Arg for key prefix
+- [ ] AWS Cognito and/or AWS IAM Identity Center integration
+
+Non-features:
+- Multi-bucket destinations (use S3 replication instead)
