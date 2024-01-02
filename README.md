@@ -27,7 +27,8 @@ Someday features:
 - [ ] Handy-dandy way to run as a background service on start-up
 - [ ] Validate bucket access on start-up
 - [x] Arg for recursion
-- [ ] Arg for key prefix
+- [ ] Arg for key prefix (original | fixed)
+- [ ] Bi-directional sync (e.g. `S3 --> SQS <-- client --> local`)
 - [ ] AWS Cognito and/or AWS IAM Identity Center integration
 
 Non-features:
