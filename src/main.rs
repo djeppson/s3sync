@@ -6,6 +6,7 @@ use std::{
 use aws_config::{default_provider::credentials::DefaultCredentialsChain, Region};
 use aws_sdk_s3 as s3;
 use clap::Parser;
+use clap_num::number_range;
 use regex::Regex;
 use s3::primitives::ByteStream;
 
@@ -25,11 +26,18 @@ pub struct Cli {
     #[arg(long)]
     profile: String,
     // AWS region
-    #[arg(long)]
+    #[arg(long, default_value = "us-east-1")]
     region: String,
     // Recursively sync the path
-    #[arg(short, long)]
+    #[arg(short, long, default_value_t = true)]
     recursive: bool,
+    // Aggregation window for events (in seconds)
+    #[arg(short, long, value_parser=window_seconds_range, default_value_t = 3)]
+    window: u64,
+}
+
+fn window_seconds_range(s: &str) -> Result<u64, String> {
+    number_range(s, 1, 3600)
 }
 
 impl Cli {
@@ -67,7 +75,8 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Setup the channel and simple debouncer
     let (tx, rx) = std::sync::mpsc::channel();
-    let mut debouncer = notify_debouncer_mini::new_debouncer(Duration::from_secs(3), tx).unwrap();
+    let mut debouncer =
+        notify_debouncer_mini::new_debouncer(Duration::from_secs(cli.window), tx).unwrap();
     let recursive_mode = if cli.recursive {
         notify::RecursiveMode::Recursive
     } else {
