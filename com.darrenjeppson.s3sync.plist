@@ -1,0 +1,25 @@
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.darrenjeppson.s3sync</string>
+    <key>Program</key>
+    <string>/usr/local/bin/s3sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/s3sync</string>
+        <string>--path</string>
+        <string>/Users/jimfranks/Downloads</string>
+        <string>--pattern</string>
+        <string>img.*</string>
+        <string>--bucket</string>
+        <string>images-bucket</string>
+        <string>--profile</string>
+        <string>sync</string>
+        <string>--region</string>
+        <string>us-east-1</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>

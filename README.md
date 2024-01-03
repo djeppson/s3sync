@@ -33,3 +33,10 @@ Someday features:
 
 Non-features:
 - Multi-bucket destinations (use S3 replication instead)
+
+
+Thanks to:
+* plist shenannigans:
+  * https://www.karltarvas.com/macos-run-script-on-startup.html
+  * https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html
+  
