@@ -24,7 +24,7 @@ s3sync \
 
 Someday features:
 
-- [ ] Handy-dandy way to run as a background service on start-up
+- [X] Handy-dandy way to run as a background service on start-up
 - [ ] Validate bucket access on start-up
 - [x] Arg for recursion
 - [ ] Arg for key prefix (original | fixed)
