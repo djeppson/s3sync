@@ -30,6 +30,7 @@ Someday features:
 - [ ] Arg for key prefix (original | fixed)
 - [ ] Bi-directional sync (e.g. `S3 --> SQS <-- client --> local`)
 - [ ] AWS Cognito and/or AWS IAM Identity Center integration
+- [ ] Works on Mac/Linux and PC
 
 Non-features:
 - Multi-bucket destinations (use S3 replication instead)
@@ -39,4 +40,5 @@ Thanks to:
 * plist shenannigans:
   * https://www.karltarvas.com/macos-run-script-on-startup.html
   * https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html
-  
+* PC compilation:
+  * https://gist.github.com/Mefistophell/9787e1b6d2d9441c16d2ac79d6a505e6
