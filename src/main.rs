@@ -33,7 +33,7 @@ mod ux {
         #[arg(short, long, default_value_t = true)]
         pub recursive: bool,
         // Aggregation window for events (in seconds)
-        #[arg(short, long, value_parser=window_seconds_range, default_value_t = 3)]
+        #[arg(short, long, value_parser=window_seconds_range, default_value_t = 1)]
         pub window: u64,
     }
 
