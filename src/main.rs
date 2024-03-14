@@ -38,7 +38,7 @@ mod ux {
     }
 
     impl Cli {
-        pub fn recursive(&self) -> RecursiveMode {
+        pub const fn recursive(&self) -> RecursiveMode {
             if self.recursive {
                 notify::RecursiveMode::Recursive
             } else {
