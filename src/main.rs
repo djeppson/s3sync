@@ -26,9 +26,6 @@ mod ux {
         // Named AWS profile
         #[arg(long)]
         pub profile: String,
-        // AWS region
-        #[arg(long, default_value = "us-east-1")]
-        pub region: String,
         // Recursively sync the path
         #[arg(short, long, default_value_t = true)]
         pub recursive: bool,
@@ -55,7 +52,9 @@ mod ux {
 mod client {
     use std::path::Path;
 
-    use aws_config::{default_provider::credentials::DefaultCredentialsChain, Region};
+    use aws_config::default_provider::{
+        credentials::DefaultCredentialsChain, region::DefaultRegionChain,
+    };
     use aws_sdk_s3 as s3;
     use s3::primitives::ByteStream;
     pub struct Bucket {
@@ -64,10 +63,15 @@ mod client {
     }
 
     impl Bucket {
-        pub async fn new(profile: String, region_name: String, bucket_name: String) -> Self {
+        pub async fn new(profile: String, bucket_name: String) -> Self {
+            let region = DefaultRegionChain::builder()
+                .profile_name(&profile)
+                .build()
+                .region()
+                .await;
             let aws_creds = DefaultCredentialsChain::builder()
                 .profile_name(&profile)
-                .region(Region::new(region_name))
+                .region(region)
                 .build()
                 .await;
             let sdk_config = aws_config::from_env()
@@ -81,17 +85,17 @@ mod client {
             }
         }
         pub async fn upload_body(&self, body: ByteStream, key: &str) -> Result<(), anyhow::Error> {
-            let response = self.client
+            let response = self
+                .client
                 .put_object()
                 .bucket(self.bucket_name.clone())
                 .key(key)
                 .body(body)
                 .send()
                 .await;
-                // .map_or(Err(anyhow::Error::msg("Upload request failed")), |_| Ok(()))
             match response {
                 Ok(_) => Ok(()),
-                Err(e) => Err(anyhow::Error::msg(e.to_string()))
+                Err(e) => Err(anyhow::Error::msg(e.to_string())),
             }
         }
         pub async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
@@ -109,6 +113,8 @@ mod client {
 
 #[::tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    tracing_subscriber::fmt::init();
+
     let cli = Cli::parse();
 
     // Setup the channel and simple debouncer
@@ -121,7 +127,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let bucket = client::Bucket::new(cli.profile, cli.region, cli.bucket).await;
+    let bucket = client::Bucket::new(cli.profile, cli.bucket).await;
     for res in rx.into_iter().flatten() {
         for event in res {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
