@@ -81,14 +81,18 @@ mod client {
             }
         }
         pub async fn upload_body(&self, body: ByteStream, key: &str) -> Result<(), anyhow::Error> {
-            self.client
+            let response = self.client
                 .put_object()
                 .bucket(self.bucket_name.clone())
                 .key(key)
                 .body(body)
                 .send()
-                .await
-                .map_or(Err(anyhow::Error::msg("Upload request failed")), |_| Ok(()))
+                .await;
+                // .map_or(Err(anyhow::Error::msg("Upload request failed")), |_| Ok(()))
+            match response {
+                Ok(_) => Ok(()),
+                Err(e) => Err(anyhow::Error::msg(e.to_string()))
+            }
         }
         pub async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
             let body = ByteStream::from_path(path).await;
