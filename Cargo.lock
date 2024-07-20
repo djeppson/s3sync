@@ -1561,7 +1561,6 @@ dependencies = [
  "clap",
  "clap-num",
  "confy",
- "notify",
  "notify-debouncer-mini",
  "regex",
  "tokio",

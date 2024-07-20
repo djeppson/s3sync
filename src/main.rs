@@ -9,6 +9,7 @@ mod ux {
     use clap::Parser;
     use clap_num::number_range;
     use notify::RecursiveMode;
+    use notify_debouncer_mini::notify;
     use regex::Regex;
 
     #[derive(Parser, Debug)]

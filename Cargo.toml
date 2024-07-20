@@ -10,7 +10,6 @@ aws-sdk-s3 = { version = "1.11.0", features = ["behavior-version-latest"] }
 clap = { version = "4.4.12", features = ["derive"] }
 clap-num = "1.0.2"
 confy = "0.5.1"
-notify = "6.1.1"
 notify-debouncer-mini = "0.4.1"
 regex = "1.10.2"
 tokio = { version = "1.35.1", features = ["macros", "rt-multi-thread"] }
