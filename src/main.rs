@@ -18,13 +18,13 @@ mod ux {
         #[arg(long)]
         pub path: PathBuf,
         // Regex pattern to apply to filenames
-        #[arg(long)]
+        #[arg(long, default_value_t = Regex::new(".*").unwrap())]
         pub pattern: Regex,
         // S3 bucket to sync with
         #[arg(long)]
         pub bucket: String,
         // Named AWS profile
-        #[arg(long)]
+        #[arg(long, default_value_t = String::from("default"))]
         pub profile: String,
         // Delete source file
         #[arg(long, default_value_t = false)]
@@ -135,13 +135,21 @@ async fn main() -> Result<(), anyhow::Error> {
         for event in res {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
             && event.path.exists()
+            && event.path.is_file()
             {
                 if let Some(result) = event
                     .path
-                    .file_name()
-                    .and_then(|filename| filename.to_str())
+                    .strip_prefix(&cli.path)
+                    .unwrap()
+                    .to_str()
                     .filter(|name| cli.pattern.is_match(name))
-                    .map(|key| bucket.upload_file(&event.path, key))
+                    .map(|key| 
+                        {
+                            
+                            println!("Uploading: {key}");
+                            bucket.upload_file(&event.path, key)
+                        }
+                    )
                 {
                     result.await.map_or_else(
                         |e| println!("Error uploading file: {e:?}"),
@@ -151,7 +159,7 @@ async fn main() -> Result<(), anyhow::Error> {
                                 std::fs::remove_file(&event.path).map_or_else(
                                     |e| println!("Delete failed {e:?}"),
                                     |()| println!("Cleaned-up file {:?}", &event.path),
-                                );    
+                                );
                             }
                         },
                     );
