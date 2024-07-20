@@ -26,6 +26,9 @@ mod ux {
         // Named AWS profile
         #[arg(long)]
         pub profile: String,
+        // Delete source file
+        #[arg(long, default_value_t = false)]
+        pub delete: bool,
         // Recursively sync the path
         #[arg(short, long, default_value_t = true)]
         pub recursive: bool,
@@ -144,10 +147,12 @@ async fn main() -> Result<(), anyhow::Error> {
                         |e| println!("Error uploading file: {e:?}"),
                         |()| {
                             println!("Upload successful: {:?}", &event.path);
-                            std::fs::remove_file(&event.path).map_or_else(
-                                |e| println!("Delete failed {e:?}"),
-                                |()| println!("Cleaned-up file {:?}", &event.path),
-                            );
+                            if cli.delete {
+                                std::fs::remove_file(&event.path).map_or_else(
+                                    |e| println!("Delete failed {e:?}"),
+                                    |()| println!("Cleaned-up file {:?}", &event.path),
+                                );    
+                            }
                         },
                     );
                 }
