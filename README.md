@@ -34,6 +34,7 @@ Someday features:
 
 - [X] Handy-dandy way to run as a background service on start-up
 - [x] Arg for recursion
+- [ ] Option to remove files from bucket upon local deletion
 - [ ] Validate bucket access on start-up
 - [ ] Bi-directional sync (e.g. `S3 --> SQS <-- client --> local`)
 - [ ] Works on Mac/Linux and PC
