@@ -157,8 +157,8 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Handle incoming events
     let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path, cli.pattern, cli.delete).await;
-    for res in rx.into_iter().flatten() {
-        for event in res {
+    for events in rx.into_iter().flatten() {
+        for event in events {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
             && event.path.exists()
             && event.path.is_file()
