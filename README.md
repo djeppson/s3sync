@@ -2,7 +2,7 @@
 Hobby project for playing with Rust.  You should probably use AWS's CLI `aws s3 sync` instead.
 
 ## Why
-Prior solution was running this little gem: 
+Prior solution was running this little gem on a every-minute cron job
 ```
 aws s3 mv /example/source/folder/ s3://my-great-bucket/ --profile foo --recursive --exclude "*" --include "example*.csv"
 ```
@@ -30,21 +30,25 @@ s3sync \
     --profile picapp 
 ```
 
-Someday features:
+## Run on Mac at startup:
+1. Create the appropriate plist with the arguments you need [example](com.darrenjeppson.s3sync.plist)
+2. Save the plist file in `/Library/LaunchAgents/`
+3. Ensure the file is owned by root: `sudo chown root:wheel /Library/LaunchAgents/com.darrenjeppson.s3sync.plist`
+4. Load the file: `sudo launchctl load /Library/LaunchAgents/com.darrenjeppson.s3sync.plist`
 
+
+## Someday features:
 - [X] Handy-dandy way to run as a background service on start-up
 - [x] Arg for recursion
+- [ ] Multiple source-to-target mappings
 - [ ] Option to remove files from bucket upon local deletion
 - [ ] Validate bucket access on start-up
 - [ ] Bi-directional sync (e.g. `S3 --> SQS <-- client --> local`)
 - [ ] Works on Mac/Linux and PC
-- [ ] Delete object on local file removal
-
-Non-features:
-- Multi-bucket destinations (use S3 replication instead)
+- [ ] Delete S3 object on local file removal
 
 
-Thanks to:
+## Thanks to:
 * plist shenannigans:
   * https://www.karltarvas.com/macos-run-script-on-startup.html
   * https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html
