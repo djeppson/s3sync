@@ -21,13 +21,14 @@ s3sync \
     --bucket cloud-backup-bucket
 ```
 
-This will only upload files meeting a specific pattern to a bucket using a named profile
+This will only upload files meeting a specific pattern to a bucket using a named profile and delete the file once uploaded
 ```
 s3sync \
     --path ~/Downloads \
     --pattern "Pictures[0-9]{8}.jpg" \
     --bucket my-awesome-pics \
     --profile picapp 
+    --delete
 ```
 
 ## Run on Mac at startup:
@@ -40,6 +41,7 @@ s3sync \
 ## Someday features:
 - [X] Handy-dandy way to run as a background service on start-up
 - [x] Arg for recursion
+- [x] Optional deletion upon successful upload / staging files
 - [ ] Multiple source-to-target mappings
 - [ ] Option to remove files from bucket upon local deletion
 - [ ] Validate bucket access on start-up
