@@ -12,16 +12,16 @@ This document contains the help content for the `s3sync` command-line program.
 
 ###### **Options:**
 
-* `--path <PATH>` — Local file path to sync
+* `-p`, `--path <PATH>` — Local file path to sync
 * `--pattern <PATTERN>` — Regex pattern to apply to filenames
 
   Default value: `.*`
-* `--bucket <BUCKET>` — S3 bucket to sync with
+* `-b`, `--bucket <BUCKET>` — S3 bucket to sync with
 * `--profile <PROFILE_NAME>` — AWS credential profile to use
 
   Default value: `default`
 * `--region <REGION_NAME>` — AWS region override
-* `--delete` — Delete source file after successful upload
+* `-d`, `--delete` — Delete source file after successful upload
 
   Default value: `false`
 * `-r`, `--recursive` — Recursively sync the provided path
