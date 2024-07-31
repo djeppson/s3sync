@@ -64,12 +64,12 @@ mod client {
     use aws_config::{default_provider::region::DefaultRegionChain, Region};
     use aws_sdk_s3 as s3;
     use s3::primitives::ByteStream;
-    pub struct Bucket {
+    pub struct S3Sync {
         client: s3::Client,
         bucket_name: String,
     }
 
-    impl Bucket {
+    impl S3Sync {
         pub async fn new(
             profile_name: String,
             bucket_name: String,
@@ -141,7 +141,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let bucket = client::Bucket::new(cli.profile_name, cli.bucket, cli.region_name).await;
+    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name).await;
     for res in rx.into_iter().flatten() {
         for event in res {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
@@ -156,7 +156,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     .filter(|name| cli.pattern.is_match(name))
                     .map(|key| {
                         println!("Uploading: {key}");
-                        bucket.upload_file(&event.path, key)
+                        s3sync.upload_file(&event.path, key)
                     })
                 {
                     result.await.map_or_else(
