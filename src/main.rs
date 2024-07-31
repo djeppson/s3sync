@@ -13,29 +13,34 @@ mod ux {
     use regex::Regex;
 
     #[derive(Parser, Debug)]
-    #[command(author, version, about, long_about = None)]
+    #[command(about, long_about = None)]
     pub struct Cli {
-        // Local file path to sync
+        /// Local file path to sync
         #[arg(long)]
         pub path: PathBuf,
-        // Regex pattern to apply to filenames
+        /// Regex pattern to apply to filenames
         #[arg(long, default_value_t = Regex::new(".*").unwrap())]
         pub pattern: Regex,
-        // S3 bucket to sync with
+        /// S3 bucket to sync with
         #[arg(long)]
         pub bucket: String,
-        // Named AWS profile
-        #[arg(long, default_value_t = String::from("default"))]
-        pub profile: String,
-        // Delete source file
+        /// AWS credential profile to use
+        #[arg(long = "profile", default_value_t = String::from("default"))]
+        pub profile_name: String,
+        /// AWS region override
+        #[arg(long = "region")]
+        pub region_name: Option<String>,
+        /// Delete source file after successful upload
         #[arg(long, default_value_t = false)]
         pub delete: bool,
-        // Recursively sync the path
+        /// Recursively sync the provided path
         #[arg(short, long, default_value_t = true)]
         pub recursive: bool,
-        // Aggregation window for events (in seconds)
-        #[arg(short, long, value_parser=window_seconds_range, default_value_t = 1)]
+        /// Number of seconds to aggregate events
+        #[arg(short, long, value_parser=window_seconds_range, default_value_t = 10)]
         pub window: u64,
+        #[arg(long, hide = true)]
+        pub markdown_help: bool,
     }
 
     impl Cli {
@@ -56,9 +61,7 @@ mod ux {
 mod client {
     use std::path::Path;
 
-    use aws_config::default_provider::{
-        credentials::DefaultCredentialsChain, region::DefaultRegionChain,
-    };
+    use aws_config::{default_provider::region::DefaultRegionChain, Region};
     use aws_sdk_s3 as s3;
     use s3::primitives::ByteStream;
     pub struct Bucket {
@@ -67,19 +70,21 @@ mod client {
     }
 
     impl Bucket {
-        pub async fn new(profile: String, bucket_name: String) -> Self {
-            let region = DefaultRegionChain::builder()
-                .profile_name(&profile)
-                .build()
-                .region()
-                .await;
-            let aws_creds = DefaultCredentialsChain::builder()
-                .profile_name(&profile)
-                .region(region)
-                .build()
-                .await;
+        pub async fn new(
+            profile_name: String,
+            bucket_name: String,
+            region_name: Option<String>,
+        ) -> Self {
+            let region = region_name
+                .map(Region::new)
+                .or(DefaultRegionChain::builder()
+                    .profile_name(&profile_name)
+                    .build()
+                    .region()
+                    .await);
             let sdk_config = aws_config::from_env()
-                .credentials_provider(aws_creds)
+                .region(region)
+                .profile_name(profile_name)
                 .load()
                 .await;
             let client = s3::Client::new(&sdk_config);
@@ -121,6 +126,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let cli = Cli::parse();
 
+    // Invoked as: `$ my-app --markdown-help`
+    if cli.markdown_help {
+        clap_markdown::print_help_markdown::<Cli>();
+    }
+
     // Setup the channel and simple debouncer
     let (tx, rx) = std::sync::mpsc::channel();
     let mut debouncer =
@@ -131,7 +141,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let bucket = client::Bucket::new(cli.profile, cli.bucket).await;
+    let bucket = client::Bucket::new(cli.profile_name, cli.bucket, cli.region_name).await;
     for res in rx.into_iter().flatten() {
         for event in res {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
