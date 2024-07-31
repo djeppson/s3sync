@@ -16,13 +16,13 @@ mod ux {
     #[command(about, long_about = None)]
     pub struct Cli {
         /// Local file path to sync
-        #[arg(long)]
+        #[arg(long, short)]
         pub path: PathBuf,
         /// Regex pattern to apply to filenames
         #[arg(long, default_value_t = Regex::new(".*").unwrap())]
         pub pattern: Regex,
         /// S3 bucket to sync with
-        #[arg(long)]
+        #[arg(long, short)]
         pub bucket: String,
         /// AWS credential profile to use
         #[arg(long = "profile", default_value_t = String::from("default"))]
@@ -31,7 +31,7 @@ mod ux {
         #[arg(long = "region")]
         pub region_name: Option<String>,
         /// Delete source file after successful upload
-        #[arg(long, default_value_t = false)]
+        #[arg(long, short, default_value_t = false)]
         pub delete: bool,
         /// Recursively sync the provided path
         #[arg(short, long, default_value_t = true)]
