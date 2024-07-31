@@ -1,2 +1,3 @@
+git pull
 cargo build --release
-cargo run -- -p / -b foo --markdown-help > help.md
+# cargo run -- -p / -b foo --markdown-help > help.md
