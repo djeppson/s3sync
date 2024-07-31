@@ -26,17 +26,18 @@ Check here for [cli instructions](help.md)
 ## Someday features:
 - [X] Handy-dandy way to run as a background service on start-up
 - [x] Arg for recursion
+- [x] Works on Mac/Linux and PC
 - [x] Optional deletion upon successful upload / staging files
 - [x] Ability to override the AWS profile region
-- [ ] Try to get the region info from the bucket name if not provided
-- [ ] Automated markdown generation for README.md
-- [ ] Allow markdown to be created without extra params
+- [x] Automated markdown generation for README.md
 - [ ] Multiple source-to-target mappings
+- [ ] Automated [plist](com.darrenjeppson.s3sync.plist) generation
+- [ ] Automated [plist](com.darrenjeppson.s3sync.plist) deployment and `launchctl unload ... && launchctl load ...`
 - [ ] Option to remove files from bucket upon local deletion
+- [ ] Try to get the region info from the bucket name if not provided
 - [ ] Validate bucket access on start-up
-- [ ] Bi-directional sync (e.g. `S3 --> SQS <-- client --> local`)
-- [ ] Works on Mac/Linux and PC
 - [ ] Delete S3 object on local file removal
+- [ ] Bi-directional sync (e.g. `S3 --> SQS <-- client --> local`)
 
 
 ## Thanks to:
