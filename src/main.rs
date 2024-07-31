@@ -59,7 +59,7 @@ mod ux {
 }
 
 mod client {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use aws_config::{default_provider::region::DefaultRegionChain, Region};
     use aws_sdk_s3 as s3;
@@ -67,6 +67,7 @@ mod client {
     pub struct S3Sync {
         client: s3::Client,
         bucket_name: String,
+        local_path: PathBuf,
     }
 
     impl S3Sync {
@@ -74,6 +75,7 @@ mod client {
             profile_name: String,
             bucket_name: String,
             region_name: Option<String>,
+            local_path: PathBuf
         ) -> Self {
             let region = region_name
                 .map(Region::new)
@@ -91,7 +93,11 @@ mod client {
             Self {
                 client,
                 bucket_name,
+                local_path
             }
+        }
+        pub fn local_path(&self) -> &PathBuf {
+            &self.local_path
         }
         pub async fn upload_body(&self, body: ByteStream, key: &str) -> Result<(), anyhow::Error> {
             let response = self
@@ -141,7 +147,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name).await;
+    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path).await;
     for res in rx.into_iter().flatten() {
         for event in res {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
@@ -150,7 +156,7 @@ async fn main() -> Result<(), anyhow::Error> {
             {
                 if let Some(result) = event
                     .path
-                    .strip_prefix(&cli.path)
+                    .strip_prefix(s3sync.local_path())
                     .unwrap()
                     .to_str()
                     .filter(|name| cli.pattern.is_match(name))
