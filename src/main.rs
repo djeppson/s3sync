@@ -69,6 +69,7 @@ mod client {
         bucket_name: String,
         local_path: PathBuf,
         pattern: regex::Regex,
+        pub delete: bool
     }
 
     impl S3Sync {
@@ -78,6 +79,7 @@ mod client {
             region_name: Option<String>,
             local_path: PathBuf,
             pattern: regex::Regex,
+            delete: bool,
         ) -> Self {
             let region = region_name
                 .map(Region::new)
@@ -97,6 +99,7 @@ mod client {
                 bucket_name,
                 local_path,
                 pattern,
+                delete,
             }
         }
         pub fn local_path(&self) -> &PathBuf {
@@ -153,7 +156,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path, cli.pattern).await;
+    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path, cli.pattern, cli.delete).await;
     for res in rx.into_iter().flatten() {
         for event in res {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
@@ -175,7 +178,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         |e| println!("Error uploading file: {e:?}"),
                         |()| {
                             println!("Upload successful: {:?}", &event.path);
-                            if cli.delete {
+                            if s3sync.delete {
                                 std::fs::remove_file(&event.path).map_or_else(
                                     |e| println!("Delete failed {e:?}"),
                                     |()| println!("Cleaned-up file {:?}", &event.path),
