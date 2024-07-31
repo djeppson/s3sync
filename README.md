@@ -12,24 +12,10 @@ Issues:
 * I didn't build it and I wanted to build a thing
 
 
-### Examples: 
+### Usage: 
 
-This will upload all files (recursively) to the desired bucket
-```
-s3sync \
-    --path ~/Downloads \
-    --bucket cloud-backup-bucket
-```
+Check here for [cli instructions](help.md)
 
-This will only upload files meeting a specific pattern to a bucket using a named profile and delete the file once uploaded
-```
-s3sync \
-    --path ~/Downloads \
-    --pattern "Pictures[0-9]{8}.jpg" \
-    --bucket my-awesome-pics \
-    --profile picapp 
-    --delete
-```
 
 ## Run on Mac at startup:
 1. Create the appropriate plist with the arguments you need [example](com.darrenjeppson.s3sync.plist)
@@ -41,6 +27,10 @@ s3sync \
 - [X] Handy-dandy way to run as a background service on start-up
 - [x] Arg for recursion
 - [x] Optional deletion upon successful upload / staging files
+- [x] Ability to override the AWS profile region
+- [ ] Try to get the region info from the bucket name if not provided
+- [ ] Automated markdown generation for README.md
+- [ ] Allow markdown to be created without extra params
 - [ ] Multiple source-to-target mappings
 - [ ] Option to remove files from bucket upon local deletion
 - [ ] Validate bucket access on start-up
