@@ -68,6 +68,7 @@ mod client {
         client: s3::Client,
         bucket_name: String,
         local_path: PathBuf,
+        pattern: regex::Regex,
     }
 
     impl S3Sync {
@@ -75,7 +76,8 @@ mod client {
             profile_name: String,
             bucket_name: String,
             region_name: Option<String>,
-            local_path: PathBuf
+            local_path: PathBuf,
+            pattern: regex::Regex,
         ) -> Self {
             let region = region_name
                 .map(Region::new)
@@ -93,11 +95,15 @@ mod client {
             Self {
                 client,
                 bucket_name,
-                local_path
+                local_path,
+                pattern,
             }
         }
         pub fn local_path(&self) -> &PathBuf {
             &self.local_path
+        }
+        pub fn pattern(&self) -> &regex::Regex {
+            &self.pattern
         }
         pub async fn upload_body(&self, body: ByteStream, key: &str) -> Result<(), anyhow::Error> {
             let response = self
@@ -147,7 +153,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path).await;
+    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path, cli.pattern).await;
     for res in rx.into_iter().flatten() {
         for event in res {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
@@ -159,7 +165,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     .strip_prefix(s3sync.local_path())
                     .unwrap()
                     .to_str()
-                    .filter(|name| cli.pattern.is_match(name))
+                    .filter(|name| s3sync.pattern().is_match(name))
                     .map(|key| {
                         println!("Uploading: {key}");
                         s3sync.upload_file(&event.path, key)
