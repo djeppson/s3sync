@@ -19,8 +19,8 @@ Check here for [cli instructions](help.md)
 
 ## Run on Mac at startup:
 1. Create the appropriate plist with the arguments you need [example](com.darrenjeppson.s3sync.plist)
-2. Save the plist file in `~/Library/LaunchAgents/`
-3. Load the file: `launchctl load ~/Library/LaunchAgents/com.darrenjeppson.s3sync.plist`
+2. Save the plist file in `sudo cp .private/com.darrenjeppson.s3sync.plist /Library/LaunchAgents/`
+3. Load the file: `sudo launchctl load /Library/LaunchAgents/com.darrenjeppson.s3sync.plist`
 
 
 ## Someday features:
