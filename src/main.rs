@@ -144,13 +144,10 @@ async fn main() -> Result<(), anyhow::Error> {
                     .unwrap()
                     .to_str()
                     .filter(|name| cli.pattern.is_match(name))
-                    .map(|key| 
-                        {
-                            
-                            println!("Uploading: {key}");
-                            bucket.upload_file(&event.path, key)
-                        }
-                    )
+                    .map(|key| {
+                        println!("Uploading: {key}");
+                        bucket.upload_file(&event.path, key)
+                    })
                 {
                     result.await.map_or_else(
                         |e| println!("Error uploading file: {e:?}"),
