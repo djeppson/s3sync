@@ -36,7 +36,7 @@ mod ux {
         #[arg(long, short, default_value_t = false)]
         pub delete: bool,
         /// Recursively sync the provided path
-        #[arg(short, long, default_value_t = true)]
+        #[arg(short, long, default_value_t = false)]
         pub recursive: bool,
         /// Number of seconds to aggregate events
         #[arg(short, long, value_parser=window_seconds_range, default_value_t = 10)]
@@ -150,14 +150,20 @@ mod client {
 async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt::init();
 
-    let cli = Cli::parse();
     let (tx, rx) = std::sync::mpsc::channel();
-    let mut debouncer =
-        notify_debouncer_mini::new_debouncer(Duration::from_secs(cli.window), tx).unwrap();
-    debouncer
-        .watcher()
-        .watch(&cli.path, cli.recursive())
-        .unwrap();
+
+    let cli = Cli::parse();
+    let window = Duration::from_secs(cli.window);
+    let _watchers = [
+        &cli.path,
+        std::path::Path::new("/Users/darrenjeppson/Downloads/frob"),
+        std::path::Path::new("/Users/darrenjeppson/Downloads/freeb"),
+    ].map(|path| {
+        let mut debouncer = notify_debouncer_mini::new_debouncer(window, tx.clone()).unwrap();
+        println!("Watch {path:?}");
+        debouncer.watcher().watch(path, cli.recursive()).unwrap();
+        debouncer
+    });
 
     let s3sync = client::S3SyncBuilder::default()
         .local_path(cli.path)
@@ -173,6 +179,7 @@ async fn main() -> Result<(), anyhow::Error> {
             && event.path.exists()
             && event.path.is_file()
             {
+                println!("Process: {event:?}");
                 s3sync.process_file(&event.path).await?;
             }
         }
