@@ -1,8 +1,9 @@
-use std::time::Duration;
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
 
 use clap::Parser;
+use std::time::Duration;
 use ux::Cli;
-
 mod ux {
     use std::path::PathBuf;
 
@@ -59,28 +60,28 @@ mod ux {
 }
 
 mod client {
-    use std::path::{Path, PathBuf};
-
     use aws_config::{default_provider::region::DefaultRegionChain, Region};
     use aws_sdk_s3 as s3;
+    use derive_builder::Builder;
     use s3::primitives::ByteStream;
+    use std::path::{Path, PathBuf};
+
+    #[derive(Builder)]
     pub struct S3Sync {
+        #[builder(setter(custom))]
         client: s3::Client,
         bucket_name: String,
         local_path: PathBuf,
         pattern: regex::Regex,
-        pub delete: bool
+        pub delete: bool,
     }
 
-    impl S3Sync {
-        pub async fn new(
+    impl S3SyncBuilder {
+        pub async fn client(
+            &mut self,
             profile_name: String,
-            bucket_name: String,
             region_name: Option<String>,
-            local_path: PathBuf,
-            pattern: regex::Regex,
-            delete: bool,
-        ) -> Self {
+        ) -> &mut Self {
             let region = region_name
                 .map(Region::new)
                 .or(DefaultRegionChain::builder()
@@ -94,18 +95,16 @@ mod client {
                 .load()
                 .await;
             let client = s3::Client::new(&sdk_config);
-            Self {
-                client,
-                bucket_name,
-                local_path,
-                pattern,
-                delete,
-            }
+            self.client = Some(client);
+            self
         }
-        pub fn local_path(&self) -> &PathBuf {
+    }
+
+    impl S3Sync {
+        pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
         }
-        pub fn pattern(&self) -> &regex::Regex {
+        pub const fn pattern(&self) -> &regex::Regex {
             &self.pattern
         }
         pub async fn upload_body(&self, body: ByteStream, key: &str) -> Result<(), anyhow::Error> {
@@ -156,7 +155,13 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path, cli.pattern, cli.delete).await;
+    let s3sync = client::S3SyncBuilder::default()
+        .local_path(cli.path)
+        .pattern(cli.pattern)
+        .bucket_name(cli.bucket)
+        .client(cli.profile_name, cli.region_name)
+        .await
+        .build()?;
     for events in rx.into_iter().flatten() {
         for event in events {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
