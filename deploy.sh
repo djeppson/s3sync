@@ -1,3 +1,3 @@
 git pull
 cargo build --release
-s3sync -p / -b foo --markdown-help > help.md
+s3sync -b foo --markdown-help > help.md

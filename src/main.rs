@@ -2,6 +2,7 @@
 #![warn(clippy::nursery)]
 
 use clap::Parser;
+use notify_debouncer_mini::DebouncedEventKind;
 use std::time::Duration;
 use ux::Cli;
 mod ux {
@@ -17,7 +18,7 @@ mod ux {
     #[command(about, long_about = None)]
     pub struct Cli {
         /// Local file path to sync
-        #[arg(long, short)]
+        #[arg(long, short, default_value = default_local_path().into_os_string())]
         pub path: PathBuf,
         /// Regex pattern to apply to filenames
         #[arg(long, default_value_t = Regex::new(".*").unwrap())]
@@ -40,8 +41,6 @@ mod ux {
         /// Number of seconds to aggregate events
         #[arg(short, long, value_parser=window_seconds_range, default_value_t = 10)]
         pub window: u64,
-        #[arg(long, hide = true)]
-        pub markdown_help: bool,
     }
 
     impl Cli {
@@ -52,6 +51,10 @@ mod ux {
                 notify::RecursiveMode::NonRecursive
             }
         }
+    }
+
+    fn default_local_path() -> PathBuf {
+        std::env::current_dir().unwrap()
     }
 
     fn window_seconds_range(s: &str) -> Result<u64, String> {
@@ -148,13 +151,6 @@ async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
-
-    // Invoked as: `$ my-app --markdown-help`
-    if cli.markdown_help {
-        clap_markdown::print_help_markdown::<Cli>();
-    }
-
-    // Setup the channel and simple debouncer
     let (tx, rx) = std::sync::mpsc::channel();
     let mut debouncer =
         notify_debouncer_mini::new_debouncer(Duration::from_secs(cli.window), tx).unwrap();
@@ -163,7 +159,6 @@ async fn main() -> Result<(), anyhow::Error> {
         .watch(&cli.path, cli.recursive())
         .unwrap();
 
-    // Handle incoming events
     let s3sync = client::S3SyncBuilder::default()
         .local_path(cli.path)
         .pattern(cli.pattern)
@@ -174,7 +169,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .build()?;
     for events in rx.into_iter().flatten() {
         for event in events {
-            if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
+            if event.kind == DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
             && event.path.exists()
             && event.path.is_file()
             {
