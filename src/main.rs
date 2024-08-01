@@ -1,8 +1,9 @@
-use std::time::Duration;
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
 
 use clap::Parser;
+use std::time::Duration;
 use ux::Cli;
-
 mod ux {
     use std::path::PathBuf;
 
@@ -59,28 +60,30 @@ mod ux {
 }
 
 mod client {
-    use std::path::{Path, PathBuf};
-
+    use anyhow::anyhow;
     use aws_config::{default_provider::region::DefaultRegionChain, Region};
     use aws_sdk_s3 as s3;
+    use derive_builder::Builder;
     use s3::primitives::ByteStream;
+    use std::path::{Path, PathBuf};
+
+    #[derive(Builder)]
+    #[builder(build_fn(error = "anyhow::Error"))]
     pub struct S3Sync {
+        #[builder(setter(custom))]
         client: s3::Client,
         bucket_name: String,
         local_path: PathBuf,
         pattern: regex::Regex,
-        pub delete: bool
+        pub delete: bool,
     }
 
-    impl S3Sync {
-        pub async fn new(
+    impl S3SyncBuilder {
+        pub async fn client(
+            &mut self,
             profile_name: String,
-            bucket_name: String,
             region_name: Option<String>,
-            local_path: PathBuf,
-            pattern: regex::Regex,
-            delete: bool,
-        ) -> Self {
+        ) -> &mut Self {
             let region = region_name
                 .map(Region::new)
                 .or(DefaultRegionChain::builder()
@@ -94,43 +97,48 @@ mod client {
                 .load()
                 .await;
             let client = s3::Client::new(&sdk_config);
-            Self {
-                client,
-                bucket_name,
-                local_path,
-                pattern,
-                delete,
-            }
+            self.client = Some(client);
+            self
         }
-        pub fn local_path(&self) -> &PathBuf {
+    }
+
+    impl S3Sync {
+        pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
         }
-        pub fn pattern(&self) -> &regex::Regex {
-            &self.pattern
+        pub async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
+            if let Ok(key) = self.object_key(file) {
+                println!("Uploading: {key}");
+                self.upload_file(file, &key).await?;
+                println!("Upload successful: {file:?}");
+                if self.delete {
+                    std::fs::remove_file(file)?;
+                    println!("Cleaned-up file {file:?}");
+                }
+            }
+            Ok(())
         }
-        pub async fn upload_body(&self, body: ByteStream, key: &str) -> Result<(), anyhow::Error> {
-            let response = self
-                .client
+        fn object_key(&self, path: &Path) -> Result<String, anyhow::Error> {
+            let key = path
+                .strip_prefix(self.local_path())?
+                .to_str()
+                .ok_or_else(|| anyhow!("Non-unicode path"))?;
+            if self.pattern.is_match(key) {
+                Ok(String::from(key))
+            } else {
+                Err(anyhow::Error::msg("Does not match pattern"))
+            }
+        }
+        async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
+            let body = ByteStream::from_path(path).await?;
+            self.client
                 .put_object()
                 .bucket(self.bucket_name.clone())
                 .key(key)
                 .body(body)
                 .send()
-                .await;
-            match response {
-                Ok(_) => Ok(()),
-                Err(e) => Err(anyhow::Error::msg(e.to_string())),
-            }
-        }
-        pub async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
-            let body = ByteStream::from_path(path).await;
-            match body {
-                Ok(body) => self.upload_body(body, key).await,
-                Err(_) => {
-                    // possibly triggered by file deletion event
-                    Err(anyhow::Error::msg("File no longer present"))
-                }
-            }
+                .await?;
+            Ok(())
         }
     }
 }
@@ -156,37 +164,21 @@ async fn main() -> Result<(), anyhow::Error> {
         .unwrap();
 
     // Handle incoming events
-    let s3sync = client::S3Sync::new(cli.profile_name, cli.bucket, cli.region_name, cli.path, cli.pattern, cli.delete).await;
+    let s3sync = client::S3SyncBuilder::default()
+        .local_path(cli.path)
+        .pattern(cli.pattern)
+        .delete(cli.delete)
+        .bucket_name(cli.bucket)
+        .client(cli.profile_name, cli.region_name)
+        .await
+        .build()?;
     for events in rx.into_iter().flatten() {
         for event in events {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
             && event.path.exists()
             && event.path.is_file()
             {
-                if let Some(result) = event
-                    .path
-                    .strip_prefix(s3sync.local_path())
-                    .unwrap()
-                    .to_str()
-                    .filter(|name| s3sync.pattern().is_match(name))
-                    .map(|key| {
-                        println!("Uploading: {key}");
-                        s3sync.upload_file(&event.path, key)
-                    })
-                {
-                    result.await.map_or_else(
-                        |e| println!("Error uploading file: {e:?}"),
-                        |()| {
-                            println!("Upload successful: {:?}", &event.path);
-                            if s3sync.delete {
-                                std::fs::remove_file(&event.path).map_or_else(
-                                    |e| println!("Delete failed {e:?}"),
-                                    |()| println!("Cleaned-up file {:?}", &event.path),
-                                );
-                            }
-                        },
-                    );
-                }
+                s3sync.process_file(&event.path).await?;
             }
         }
     }
