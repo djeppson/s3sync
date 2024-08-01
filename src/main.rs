@@ -158,6 +158,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let s3sync = client::S3SyncBuilder::default()
         .local_path(cli.path)
         .pattern(cli.pattern)
+        .delete(cli.delete)
         .bucket_name(cli.bucket)
         .client(cli.profile_name, cli.region_name)
         .await
