@@ -36,7 +36,7 @@ mod ux {
         #[arg(long, short, default_value_t = false)]
         pub delete: bool,
         /// Recursively sync the provided path
-        #[arg(short, long, default_value_t = true)]
+        #[arg(short, long, default_value_t = false)]
         pub recursive: bool,
         /// Number of seconds to aggregate events
         #[arg(short, long, value_parser=window_seconds_range, default_value_t = 10)]
