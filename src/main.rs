@@ -13,6 +13,24 @@ mod ux {
     use notify::RecursiveMode;
     use notify_debouncer_mini::notify;
     use regex::Regex;
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug)]
+    pub struct SyncConfigs {
+        pub configs: Vec<SyncConfig>,
+    }
+
+    #[derive(Deserialize, Debug)]
+    pub struct SyncConfig {
+        path: PathBuf,
+        bucket: String,
+        #[serde(default, with = "serde_regex")]
+        pattern: Option<regex::Regex>,
+        profile: Option<String>,
+        region: Option<String>,
+        delete: Option<bool>,
+        recursive: Option<bool>,
+    }
 
     #[derive(Parser, Debug)]
     #[command(about, long_about = None)]
@@ -50,6 +68,23 @@ mod ux {
             } else {
                 notify::RecursiveMode::NonRecursive
             }
+        }
+        pub fn configs(&self) -> SyncConfigs {
+            let filename = "sync.toml";
+            let contents = std::fs::read_to_string(filename).unwrap();
+            let mut configs: SyncConfigs = toml::from_str(&contents).unwrap();
+            println!("File Configs: {configs:?}");
+            let cmdline = SyncConfig {
+                path: self.path.clone(),
+                bucket: self.bucket.clone(),
+                pattern: Some(self.pattern.clone()),
+                profile: Some(self.profile_name.clone()),
+                region: self.region_name.clone(),
+                delete: Some(self.delete),
+                recursive: Some(self.recursive),
+            };
+            configs.configs.push(cmdline);
+            configs
         }
     }
 
@@ -153,12 +188,17 @@ async fn main() -> Result<(), anyhow::Error> {
     let (tx, rx) = std::sync::mpsc::channel();
 
     let cli = Cli::parse();
+    for config in cli.configs().configs {
+        println!("{config:?}");
+    }
+
     let window = Duration::from_secs(cli.window);
     let _watchers = [
         &cli.path,
         std::path::Path::new("/Users/darrenjeppson/Downloads/frob"),
         std::path::Path::new("/Users/darrenjeppson/Downloads/freeb"),
-    ].map(|path| {
+    ]
+    .map(|path| {
         let mut debouncer = notify_debouncer_mini::new_debouncer(window, tx.clone()).unwrap();
         println!("Watch {path:?}");
         debouncer.watcher().watch(path, cli.recursive()).unwrap();
@@ -173,16 +213,16 @@ async fn main() -> Result<(), anyhow::Error> {
         .client(cli.profile_name, cli.region_name)
         .await
         .build()?;
-    for events in rx.into_iter().flatten() {
-        for event in events {
-            if event.kind == DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
-            && event.path.exists()
-            && event.path.is_file()
-            {
-                println!("Process: {event:?}");
-                s3sync.process_file(&event.path).await?;
-            }
-        }
-    }
+    // for events in rx.into_iter().flatten() {
+    //     for event in events {
+    //         if event.kind == DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
+    //         && event.path.exists()
+    //         && event.path.is_file()
+    //         {
+    //             println!("Process: {event:?}");
+    //             s3sync.process_file(&event.path).await?;
+    //         }
+    //     }
+    // }
     Ok(())
 }
