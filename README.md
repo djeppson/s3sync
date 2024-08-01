@@ -14,7 +14,20 @@ Issues:
 
 ### Usage: 
 
-Check here for [cli instructions](help.md)
+```
+Usage: s3sync [OPTIONS] --bucket <BUCKET>
+
+Options:
+  -p, --path <PATH>             Local file path to sync [default: /Users/darrenjeppson/projects/s3sync]
+      --pattern <PATTERN>       Regex pattern to apply to filenames [default: .*]
+  -b, --bucket <BUCKET>         S3 bucket to sync with
+      --profile <PROFILE_NAME>  AWS credential profile to use [default: default]
+      --region <REGION_NAME>    AWS region override
+  -d, --delete                  Delete source file after successful upload
+  -r, --recursive               Recursively sync the provided path
+  -w, --window <WINDOW>         Number of seconds to aggregate events [default: 10]
+  -h, --help                    Print help
+```
 
 
 ## Run on Mac at startup:
