@@ -103,9 +103,9 @@ mod s3sync {
         type Error = anyhow::Error;
 
         fn try_from(value: Cli) -> Result<Self, Self::Error> {
-            let agents = if let Some(filename) = value.config {
-                let contents = std::fs::read_to_string(filename).unwrap();
-                toml::from_str(&contents).unwrap()
+            if let Some(filename) = value.config {
+                let contents = std::fs::read_to_string(filename)?;
+                Ok(toml::from_str(&contents)?)
             } else {
                 let agent = Agent {
                     local_path: value.path,
@@ -116,10 +116,9 @@ mod s3sync {
                     delete: Some(value.delete),
                     recursive: Some(value.recursive),
                     window: Some(value.window),
-                };
-                vec![agent]
-            };
-            Ok(Self { agents })
+                };                
+                Ok(Self { agents: vec![agent] })
+            }
         }
     }
 
