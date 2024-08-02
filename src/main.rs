@@ -12,9 +12,12 @@ async fn main() -> Result<(), anyhow::Error> {
     let (tx, rx) = std::sync::mpsc::channel();
 
     let agents = s3sync::Agents::try_from(ux::Cli::parse())?.agents;
-    let _ = agents
+
+    // Need a variable name to get the watchers to run
+    let _watchers = agents
         .iter()
-        .map(|agent| agent.watcher(tx.clone()));
+        .map(|agent| agent.watcher(tx.clone()))
+        .collect::<Vec<_>>();
 
     // TODO: send events to each agent
     let s3sync = agents.first().unwrap();
@@ -85,7 +88,7 @@ mod s3sync {
     use derive_builder::Builder;
     use notify_debouncer_mini::{
         new_debouncer,
-        notify::{RecursiveMode, Watcher},
+        notify::{FsEventWatcher, RecursiveMode},
         DebounceEventHandler, Debouncer,
     };
     use regex::Regex;
@@ -116,8 +119,10 @@ mod s3sync {
                     delete: Some(value.delete),
                     recursive: Some(value.recursive),
                     window: Some(value.window),
-                };                
-                Ok(Self { agents: vec![agent] })
+                };
+                Ok(Self {
+                    agents: vec![agent],
+                })
             }
         }
     }
@@ -153,7 +158,7 @@ mod s3sync {
         pub fn window(&self) -> u64 {
             self.window.unwrap_or(DEFAULT_EVENT_WINDOW_SECONDS)
         }
-        pub fn watcher<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<impl Watcher> {
+        pub fn watcher<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<FsEventWatcher> {
             let mut watcher =
                 new_debouncer(std::time::Duration::from_secs(self.window()), tx).unwrap();
             println!("Watch {:?}", self.local_path());
