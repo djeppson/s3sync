@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use notify_debouncer_mini::{notify::FsEventWatcher, DebouncedEventKind, Debouncer};
-use s3sync::{Agent, AgentConfig};
+use s3sync::Agent;
 use ux::Cli;
 mod ux {
     use std::path::PathBuf;
@@ -65,89 +65,50 @@ mod s3sync {
     use crate::ux::Cli;
 
     #[derive(Deserialize, Debug)]
-    pub struct AgentConfigs {
-        pub configs: Vec<AgentConfig>,
+    pub struct Agents {
+        pub agents: Vec<Agent>,
     }
 
-    impl AgentConfigs {
+    impl Agents {
         pub fn from_config(filename: PathBuf) -> Self {
             let contents = std::fs::read_to_string(filename).unwrap();
             toml::from_str(&contents).unwrap()
         }
     }
 
-    #[derive(Deserialize, Debug)]
-    pub struct AgentConfig {
-        path: PathBuf,
-        bucket: String,
-        #[serde(with = "serde_regex", default)]
-        pattern: Option<Regex>,
-        profile: Option<String>,
-        region: Option<String>,
-        delete: Option<bool>,
-        recursive: Option<bool>,
-    }
-
-    impl From<Cli> for AgentConfig {
-        fn from(value: Cli) -> Self {
-            Self {
-                path: value.path,
-                bucket: value.bucket,
-                pattern: Some(value.pattern),
-                profile: value.profile,
-                region: value.region,
-                delete: Some(value.delete),
-                recursive: Some(value.recursive),
-            }
-        }
-    }
-
-    #[derive(Builder)]
+    #[derive(Builder, Deserialize, Debug)]
     #[builder(build_fn(error = "anyhow::Error"))]
     pub struct Agent {
         local_path: PathBuf,
         bucket_name: String,
+        #[serde(with = "serde_regex", default)]
         pattern: Option<Regex>,
-        profile_name: String,
+        profile_name: Option<String>,
         region_name: Option<String>,
-        delete: bool,
-        recursive: RecursiveMode,
-    }
-
-    impl TryFrom<AgentConfig> for Agent {
-        type Error = anyhow::Error;
-
-        fn try_from(value: AgentConfig) -> Result<Self, Self::Error> {
-            let agent = AgentBuilder::default()
-                .local_path(value.path)
-                .pattern(value.pattern)
-                .bucket_name(value.bucket)
-                .profile_name(value.profile.unwrap_or_else(|| String::from("default")))
-                .region_name(value.region)
-                .delete(value.delete.unwrap_or(false))
-                .recursive(if value.recursive.unwrap_or(false) {
-                    RecursiveMode::Recursive
-                } else {
-                    RecursiveMode::NonRecursive
-                })
-                .build()?;
-            Ok(agent)
-        }
+        delete: Option<bool>,
+        recursive: Option<bool>,
     }
 
     impl Agent {
         pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
         }
-        pub const fn recursive_mode(&self) -> RecursiveMode {
-            self.recursive
+        pub fn recursive_mode(&self) -> RecursiveMode {
+            if self.recursive.unwrap_or(false) {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            }
+        }
+        pub fn delete(&self) -> bool {
+            self.delete.unwrap_or(false)
         }
         pub async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
             if let Ok(key) = self.object_key(file) {
                 println!("Uploading: {key}");
                 self.upload_file(file, &key).await?;
                 println!("Upload successful: {file:?}");
-                if self.delete {
+                if self.delete() {
                     std::fs::remove_file(file)?;
                     println!("Cleaned-up file {file:?}");
                 }
@@ -159,7 +120,10 @@ mod s3sync {
                 .strip_prefix(self.local_path())?
                 .to_str()
                 .ok_or_else(|| anyhow!("Non-unicode path"))?;
-            let applied_pattern = self.pattern.clone().unwrap_or_else(|| Regex::new(r".*").unwrap());
+            let applied_pattern = self
+                .pattern
+                .clone()
+                .unwrap_or_else(|| Regex::new(r".*").unwrap());
             if applied_pattern.is_match(key) {
                 Ok(String::from(key))
             } else {
@@ -168,18 +132,20 @@ mod s3sync {
         }
         async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
             let body = ByteStream::from_path(path).await?;
-            let region = self
-                .region_name
+            let profile_name = self
+                .profile_name
                 .clone()
-                .map(Region::new)
-                .or(DefaultRegionChain::builder()
-                    .profile_name(&self.profile_name)
+                .unwrap_or_else(|| String::from("default"));
+            let region = self.region_name.clone().map(Region::new).or({
+                DefaultRegionChain::builder()
+                    .profile_name(&profile_name)
                     .build()
                     .region()
-                    .await);
+                    .await
+            });
             let sdk_config = aws_config::from_env()
                 .region(region)
-                .profile_name(self.profile_name.clone())
+                .profile_name(profile_name)
                 .load()
                 .await;
             let client = s3::Client::new(&sdk_config);
@@ -193,6 +159,20 @@ mod s3sync {
             Ok(())
         }
     }
+
+    impl From<Cli> for Agent {
+        fn from(value: Cli) -> Self {
+            Self {
+                local_path: value.path,
+                bucket_name: value.bucket,
+                pattern: Some(value.pattern),
+                profile_name: value.profile,
+                region_name: value.region,
+                delete: Some(value.delete),
+                recursive: Some(value.recursive),
+            }
+        }
+    }
 }
 
 #[::tokio::main]
@@ -202,17 +182,8 @@ async fn main() -> Result<(), anyhow::Error> {
     let (tx, rx) = std::sync::mpsc::channel();
 
     let agents = Cli::parse().config.map_or_else(
-        || {
-            let config = AgentConfig::from(Cli::parse());
-            vec![Agent::try_from(config).unwrap()]
-        },
-        |filename| {
-            s3sync::AgentConfigs::from_config(filename)
-                .configs
-                .into_iter()
-                .map(|config| s3sync::Agent::try_from(config).unwrap())
-                .collect()
-        },
+        || vec![Agent::from(Cli::parse())],
+        |filename| s3sync::Agents::from_config(filename).agents,
     );
 
     let s3sync = &agents[0];
