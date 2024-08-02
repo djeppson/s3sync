@@ -11,16 +11,13 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let agents = s3sync::Agents::try_from(ux::Cli::parse())?;
-    let _watchers: Vec<_> = agents
-        .agents()
+    let agents = s3sync::Agents::try_from(ux::Cli::parse())?.agents;
+    let _ = agents
         .iter()
-        .map(|agent| agent.watcher(tx.clone()))
-        .collect::<Vec<_>>();
+        .map(|agent| agent.watcher(tx.clone()));
 
     // TODO: send events to each agent
-    let binding = agents.agents();
-    let s3sync = binding.first().unwrap();
+    let s3sync = agents.first().unwrap();
     for events in rx.into_iter().flatten() {
         for event in events {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
@@ -98,12 +95,8 @@ mod s3sync {
     use crate::{ux::Cli, DEFAULT_EVENT_WINDOW_SECONDS};
 
     #[derive(Deserialize, Debug)]
-    pub struct Agents(Vec<Agent>);
-
-    impl Agents {
-        pub fn agents(&self) -> Vec<Agent> {
-            self.0.clone()
-        }
+    pub struct Agents {
+        pub agents: Vec<Agent>,
     }
 
     impl TryFrom<Cli> for Agents {
@@ -126,7 +119,7 @@ mod s3sync {
                 };
                 vec![agent]
             };
-            Ok(Self(agents))
+            Ok(Self { agents })
         }
     }
 
