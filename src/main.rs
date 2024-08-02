@@ -80,7 +80,7 @@ mod s3sync {
     pub struct AgentConfig {
         path: PathBuf,
         bucket: String,
-        #[serde(with = "serde_regex")]
+        #[serde(with = "serde_regex", default)]
         pattern: Option<Regex>,
         profile: Option<String>,
         region: Option<String>,
