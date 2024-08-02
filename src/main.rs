@@ -1,36 +1,17 @@
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
 
-use clap::Parser;
-use notify_debouncer_mini::DebouncedEventKind;
 use std::time::Duration;
+
+use clap::Parser;
+use notify_debouncer_mini::{notify::FsEventWatcher, DebouncedEventKind, Debouncer};
 use ux::Cli;
 mod ux {
     use std::path::PathBuf;
 
     use clap::Parser;
     use clap_num::number_range;
-    use notify::RecursiveMode;
-    use notify_debouncer_mini::notify;
     use regex::Regex;
-    use serde::Deserialize;
-
-    #[derive(Deserialize, Debug)]
-    pub struct SyncConfigs {
-        pub configs: Vec<SyncConfig>,
-    }
-
-    #[derive(Deserialize, Debug)]
-    pub struct SyncConfig {
-        path: PathBuf,
-        bucket: String,
-        #[serde(default, with = "serde_regex")]
-        pattern: Option<regex::Regex>,
-        profile: Option<String>,
-        region: Option<String>,
-        delete: Option<bool>,
-        recursive: Option<bool>,
-    }
 
     #[derive(Parser, Debug)]
     #[command(about, long_about = None)]
@@ -59,33 +40,8 @@ mod ux {
         /// Number of seconds to aggregate events
         #[arg(short, long, value_parser=window_seconds_range, default_value_t = 10)]
         pub window: u64,
-    }
-
-    impl Cli {
-        pub const fn recursive(&self) -> RecursiveMode {
-            if self.recursive {
-                notify::RecursiveMode::Recursive
-            } else {
-                notify::RecursiveMode::NonRecursive
-            }
-        }
-        pub fn configs(&self) -> SyncConfigs {
-            let filename = "sync.toml";
-            let contents = std::fs::read_to_string(filename).unwrap();
-            let mut configs: SyncConfigs = toml::from_str(&contents).unwrap();
-            println!("File Configs: {configs:?}");
-            let cmdline = SyncConfig {
-                path: self.path.clone(),
-                bucket: self.bucket.clone(),
-                pattern: Some(self.pattern.clone()),
-                profile: Some(self.profile_name.clone()),
-                region: self.region_name.clone(),
-                delete: Some(self.delete),
-                recursive: Some(self.recursive),
-            };
-            configs.configs.push(cmdline);
-            configs
-        }
+        #[arg(long)]
+        pub config: Option<PathBuf>,
     }
 
     fn default_local_path() -> PathBuf {
@@ -97,59 +53,110 @@ mod ux {
     }
 }
 
-mod client {
+mod s3sync {
+    use std::path::{Path, PathBuf};
+
     use anyhow::anyhow;
     use aws_config::{default_provider::region::DefaultRegionChain, Region};
     use aws_sdk_s3 as s3;
     use derive_builder::Builder;
+    use notify_debouncer_mini::notify::RecursiveMode;
     use s3::primitives::ByteStream;
-    use std::path::{Path, PathBuf};
+    use serde::Deserialize;
 
-    #[derive(Builder)]
-    #[builder(build_fn(error = "anyhow::Error"))]
-    pub struct S3Sync {
-        #[builder(setter(custom))]
-        client: s3::Client,
-        bucket_name: String,
-        local_path: PathBuf,
-        pattern: regex::Regex,
-        pub delete: bool,
+    use crate::ux::Cli;
+
+    #[derive(Deserialize, Debug)]
+    pub struct AgentConfigs {
+        pub configs: Vec<AgentConfig>,
     }
 
-    impl S3SyncBuilder {
-        pub async fn client(
-            &mut self,
-            profile_name: String,
-            region_name: Option<String>,
-        ) -> &mut Self {
-            let region = region_name
-                .map(Region::new)
-                .or(DefaultRegionChain::builder()
-                    .profile_name(&profile_name)
-                    .build()
-                    .region()
-                    .await);
-            let sdk_config = aws_config::from_env()
-                .region(region)
-                .profile_name(profile_name)
-                .load()
-                .await;
-            let client = s3::Client::new(&sdk_config);
-            self.client = Some(client);
-            self
+    impl AgentConfigs {
+        pub fn from_config(filename: PathBuf) -> Self {
+            let contents = std::fs::read_to_string(filename).unwrap();
+            toml::from_str(&contents).unwrap()
         }
     }
 
-    impl S3Sync {
+    #[derive(Deserialize, Debug)]
+    pub struct AgentConfig {
+        pub path: PathBuf,
+        pub bucket: String,
+        #[serde(default, with = "serde_regex")]
+        pub pattern: Option<regex::Regex>,
+        pub profile: Option<String>,
+        pub region: Option<String>,
+        pub delete: Option<bool>,
+        pub recursive: Option<bool>,
+    }
+
+    #[derive(Builder)]
+    #[builder(build_fn(error = "anyhow::Error"))]
+    pub struct Agent {
+        profile_name: String,
+        region_name: Option<String>,
+        bucket_name: String,
+        local_path: PathBuf,
+        pattern: regex::Regex,
+        delete: Option<bool>,
+        recursive: Option<bool>,
+    }
+
+    impl TryFrom<AgentConfig> for Agent {
+        type Error = anyhow::Error;
+
+        fn try_from(value: AgentConfig) -> Result<Self, Self::Error> {
+            let agent = AgentBuilder::default()
+                .local_path(value.path)
+                .pattern(
+                    value
+                        .pattern
+                        .unwrap_or_else(|| regex::Regex::new(".*").unwrap()),
+                )
+                .bucket_name(value.bucket)
+                .profile_name(value.profile.unwrap_or_else(|| String::from("default")))
+                .region_name(value.region)
+                .delete(Some(value.delete.unwrap_or(false)))
+                .recursive(Some(value.recursive.unwrap_or(false)))
+                .build()?;
+            Ok(agent)
+        }
+    }
+
+    impl TryFrom<Cli> for Agent {
+        type Error = anyhow::Error;
+
+        fn try_from(value: Cli) -> Result<Self, Self::Error> {
+            let agent = AgentBuilder::default()
+                .local_path(value.path)
+                .pattern(value.pattern)
+                .bucket_name(value.bucket)
+                .profile_name(value.profile_name)
+                .region_name(value.region_name)
+                .delete(Some(value.delete))
+                .recursive(Some(value.recursive))
+                .build()?;
+            Ok(agent)
+        }
+    }
+
+    impl Agent {
         pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
+        }
+        pub fn recursive_mode(&self) -> RecursiveMode {
+            if self.recursive.unwrap_or(false) {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            }
         }
         pub async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
             if let Ok(key) = self.object_key(file) {
                 println!("Uploading: {key}");
                 self.upload_file(file, &key).await?;
                 println!("Upload successful: {file:?}");
-                if self.delete {
+                if self.delete.unwrap_or(false) {
                     std::fs::remove_file(file)?;
                     println!("Cleaned-up file {file:?}");
                 }
@@ -169,7 +176,22 @@ mod client {
         }
         async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
             let body = ByteStream::from_path(path).await?;
-            self.client
+            let region = self
+                .region_name
+                .clone()
+                .map(Region::new)
+                .or(DefaultRegionChain::builder()
+                    .profile_name(&self.profile_name)
+                    .build()
+                    .region()
+                    .await);
+            let sdk_config = aws_config::from_env()
+                .region(region)
+                .profile_name(self.profile_name.clone())
+                .load()
+                .await;
+            let client = s3::Client::new(&sdk_config);
+            client
                 .put_object()
                 .bucket(self.bucket_name.clone())
                 .key(key)
@@ -187,42 +209,42 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let cli = Cli::parse();
-    for config in cli.configs().configs {
-        println!("{config:?}");
+    let agents = Cli::parse().config.map_or_else(
+        || vec![s3sync::Agent::try_from(Cli::parse()).unwrap()],
+        |filename| {
+            s3sync::AgentConfigs::from_config(filename)
+                .configs
+                .into_iter()
+                .map(|config| s3sync::Agent::try_from(config).unwrap())
+                .collect()
+        },
+    );
+
+    let s3sync = &agents[0];
+    let window = Duration::from_secs(1);
+    let _watchers: Vec<Debouncer<FsEventWatcher>> = agents
+        .iter()
+        .map(|agent| {
+            let mut debouncer = notify_debouncer_mini::new_debouncer(window, tx.clone()).unwrap();
+            println!("Watch {:?}", agent.local_path());
+            debouncer
+                .watcher()
+                .watch(agent.local_path(), s3sync.recursive_mode())
+                .unwrap();
+            debouncer
+        })
+        .collect::<Vec<_>>();
+
+    for events in rx.into_iter().flatten() {
+        for event in events {
+            if event.kind == DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
+            && event.path.exists()
+            && event.path.is_file()
+            {
+                println!("Process: {event:?}");
+                s3sync.process_file(&event.path).await?;
+            }
+        }
     }
-
-    let window = Duration::from_secs(cli.window);
-    let _watchers = [
-        &cli.path,
-        std::path::Path::new("/Users/darrenjeppson/Downloads/frob"),
-        std::path::Path::new("/Users/darrenjeppson/Downloads/freeb"),
-    ]
-    .map(|path| {
-        let mut debouncer = notify_debouncer_mini::new_debouncer(window, tx.clone()).unwrap();
-        println!("Watch {path:?}");
-        debouncer.watcher().watch(path, cli.recursive()).unwrap();
-        debouncer
-    });
-
-    let s3sync = client::S3SyncBuilder::default()
-        .local_path(cli.path)
-        .pattern(cli.pattern)
-        .delete(cli.delete)
-        .bucket_name(cli.bucket)
-        .client(cli.profile_name, cli.region_name)
-        .await
-        .build()?;
-    // for events in rx.into_iter().flatten() {
-    //     for event in events {
-    //         if event.kind == DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
-    //         && event.path.exists()
-    //         && event.path.is_file()
-    //         {
-    //             println!("Process: {event:?}");
-    //             s3sync.process_file(&event.path).await?;
-    //         }
-    //     }
-    // }
     Ok(())
 }
