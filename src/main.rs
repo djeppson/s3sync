@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use notify_debouncer_mini::{notify::FsEventWatcher, DebouncedEventKind, Debouncer};
+use s3sync::{Agent, AgentConfig};
 use ux::Cli;
 mod ux {
     use std::path::PathBuf;
@@ -17,20 +18,20 @@ mod ux {
     #[command(about, long_about = None)]
     pub struct Cli {
         /// Local file path to sync
-        #[arg(long, short, default_value = default_local_path().into_os_string())]
+        #[arg(long, short, default_value = std::env::current_dir().unwrap().into_os_string())]
         pub path: PathBuf,
-        /// Regex pattern to apply to filenames
-        #[arg(long, default_value_t = Regex::new(".*").unwrap())]
-        pub pattern: Regex,
         /// S3 bucket to sync with
         #[arg(long, short)]
         pub bucket: String,
+        /// Regex filter to match events
+        #[arg(long, default_value_t = Regex::new(".*").unwrap())]
+        pub pattern: Regex,
         /// AWS credential profile to use
-        #[arg(long = "profile", default_value_t = String::from("default"))]
-        pub profile_name: String,
+        #[arg(long)]
+        pub profile: Option<String>,
         /// AWS region override
-        #[arg(long = "region")]
-        pub region_name: Option<String>,
+        #[arg(long)]
+        pub region: Option<String>,
         /// Delete source file after successful upload
         #[arg(long, short, default_value_t = false)]
         pub delete: bool,
@@ -38,14 +39,10 @@ mod ux {
         #[arg(short, long, default_value_t = false)]
         pub recursive: bool,
         /// Number of seconds to aggregate events
-        #[arg(short, long, value_parser=window_seconds_range, default_value_t = 10)]
+        #[arg(short, long, value_parser=window_seconds_range, default_value_t = 5)]
         pub window: u64,
         #[arg(long)]
         pub config: Option<PathBuf>,
-    }
-
-    fn default_local_path() -> PathBuf {
-        std::env::current_dir().unwrap()
     }
 
     fn window_seconds_range(s: &str) -> Result<u64, String> {
@@ -61,6 +58,7 @@ mod s3sync {
     use aws_sdk_s3 as s3;
     use derive_builder::Builder;
     use notify_debouncer_mini::notify::RecursiveMode;
+    use regex::Regex;
     use s3::primitives::ByteStream;
     use serde::Deserialize;
 
@@ -80,26 +78,40 @@ mod s3sync {
 
     #[derive(Deserialize, Debug)]
     pub struct AgentConfig {
-        pub path: PathBuf,
-        pub bucket: String,
-        #[serde(default, with = "serde_regex")]
-        pub pattern: Option<regex::Regex>,
-        pub profile: Option<String>,
-        pub region: Option<String>,
-        pub delete: Option<bool>,
-        pub recursive: Option<bool>,
+        path: PathBuf,
+        bucket: String,
+        #[serde(with = "serde_regex")]
+        pattern: Option<Regex>,
+        profile: Option<String>,
+        region: Option<String>,
+        delete: Option<bool>,
+        recursive: Option<bool>,
+    }
+
+    impl From<Cli> for AgentConfig {
+        fn from(value: Cli) -> Self {
+            Self {
+                path: value.path,
+                bucket: value.bucket,
+                pattern: Some(value.pattern),
+                profile: value.profile,
+                region: value.region,
+                delete: Some(value.delete),
+                recursive: Some(value.recursive),
+            }
+        }
     }
 
     #[derive(Builder)]
     #[builder(build_fn(error = "anyhow::Error"))]
     pub struct Agent {
+        local_path: PathBuf,
+        bucket_name: String,
+        pattern: Option<Regex>,
         profile_name: String,
         region_name: Option<String>,
-        bucket_name: String,
-        local_path: PathBuf,
-        pattern: regex::Regex,
-        delete: Option<bool>,
-        recursive: Option<bool>,
+        delete: bool,
+        recursive: RecursiveMode,
     }
 
     impl TryFrom<AgentConfig> for Agent {
@@ -108,33 +120,16 @@ mod s3sync {
         fn try_from(value: AgentConfig) -> Result<Self, Self::Error> {
             let agent = AgentBuilder::default()
                 .local_path(value.path)
-                .pattern(
-                    value
-                        .pattern
-                        .unwrap_or_else(|| regex::Regex::new(".*").unwrap()),
-                )
+                .pattern(value.pattern)
                 .bucket_name(value.bucket)
                 .profile_name(value.profile.unwrap_or_else(|| String::from("default")))
                 .region_name(value.region)
-                .delete(Some(value.delete.unwrap_or(false)))
-                .recursive(Some(value.recursive.unwrap_or(false)))
-                .build()?;
-            Ok(agent)
-        }
-    }
-
-    impl TryFrom<Cli> for Agent {
-        type Error = anyhow::Error;
-
-        fn try_from(value: Cli) -> Result<Self, Self::Error> {
-            let agent = AgentBuilder::default()
-                .local_path(value.path)
-                .pattern(value.pattern)
-                .bucket_name(value.bucket)
-                .profile_name(value.profile_name)
-                .region_name(value.region_name)
-                .delete(Some(value.delete))
-                .recursive(Some(value.recursive))
+                .delete(value.delete.unwrap_or(false))
+                .recursive(if value.recursive.unwrap_or(false) {
+                    RecursiveMode::Recursive
+                } else {
+                    RecursiveMode::NonRecursive
+                })
                 .build()?;
             Ok(agent)
         }
@@ -144,19 +139,15 @@ mod s3sync {
         pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
         }
-        pub fn recursive_mode(&self) -> RecursiveMode {
-            if self.recursive.unwrap_or(false) {
-                RecursiveMode::Recursive
-            } else {
-                RecursiveMode::NonRecursive
-            }
+        pub const fn recursive_mode(&self) -> RecursiveMode {
+            self.recursive
         }
         pub async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
             if let Ok(key) = self.object_key(file) {
                 println!("Uploading: {key}");
                 self.upload_file(file, &key).await?;
                 println!("Upload successful: {file:?}");
-                if self.delete.unwrap_or(false) {
+                if self.delete {
                     std::fs::remove_file(file)?;
                     println!("Cleaned-up file {file:?}");
                 }
@@ -168,7 +159,8 @@ mod s3sync {
                 .strip_prefix(self.local_path())?
                 .to_str()
                 .ok_or_else(|| anyhow!("Non-unicode path"))?;
-            if self.pattern.is_match(key) {
+            let applied_pattern = self.pattern.clone().unwrap_or_else(|| Regex::new(r".*").unwrap());
+            if applied_pattern.is_match(key) {
                 Ok(String::from(key))
             } else {
                 Err(anyhow::Error::msg("Does not match pattern"))
@@ -210,7 +202,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let (tx, rx) = std::sync::mpsc::channel();
 
     let agents = Cli::parse().config.map_or_else(
-        || vec![s3sync::Agent::try_from(Cli::parse()).unwrap()],
+        || {
+            let config = AgentConfig::from(Cli::parse());
+            vec![Agent::try_from(config).unwrap()]
+        },
         |filename| {
             s3sync::AgentConfigs::from_config(filename)
                 .configs
