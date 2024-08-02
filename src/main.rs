@@ -1,18 +1,51 @@
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
 
-use std::time::Duration;
-
 use clap::Parser;
-use notify_debouncer_mini::{notify::FsEventWatcher, DebouncedEventKind, Debouncer};
-use s3sync::Agent;
-use ux::Cli;
+
+const DEFAULT_EVENT_WINDOW_SECONDS: u64 = 5;
+
+#[::tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
+    tracing_subscriber::fmt::init();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let agents = s3sync::Agents::try_from(ux::Cli::parse())?;
+    let _watchers: Vec<_> = agents
+        .agents()
+        .iter()
+        .map(|agent| agent.watcher(tx.clone()))
+        .collect::<Vec<_>>();
+
+    // TODO: send events to each agent
+    let binding = agents.agents();
+    let s3sync = binding.first().unwrap();
+    for events in rx.into_iter().flatten() {
+        for event in events {
+            if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
+            && event.path.exists()
+            && event.path.is_file()
+            {
+                println!("Process: {event:?}");
+                s3sync.process_file(&event.path).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn window_seconds_range(s: &str) -> Result<u64, String> {
+    clap_num::number_range(s, 1, 3600)
+}
+
 mod ux {
     use std::path::PathBuf;
 
     use clap::Parser;
-    use clap_num::number_range;
     use regex::Regex;
+
+    use crate::{window_seconds_range, DEFAULT_EVENT_WINDOW_SECONDS};
 
     #[derive(Parser, Debug)]
     #[command(about, long_about = None)]
@@ -39,14 +72,10 @@ mod ux {
         #[arg(short, long, default_value_t = false)]
         pub recursive: bool,
         /// Number of seconds to aggregate events
-        #[arg(short, long, value_parser=window_seconds_range, default_value_t = 5)]
+        #[arg(short, long, value_parser=window_seconds_range, default_value_t = DEFAULT_EVENT_WINDOW_SECONDS)]
         pub window: u64,
         #[arg(long)]
         pub config: Option<PathBuf>,
-    }
-
-    fn window_seconds_range(s: &str) -> Result<u64, String> {
-        number_range(s, 1, 3600)
     }
 }
 
@@ -57,26 +86,51 @@ mod s3sync {
     use aws_config::{default_provider::region::DefaultRegionChain, Region};
     use aws_sdk_s3 as s3;
     use derive_builder::Builder;
-    use notify_debouncer_mini::notify::RecursiveMode;
+    use notify_debouncer_mini::{
+        new_debouncer,
+        notify::{RecursiveMode, Watcher},
+        DebounceEventHandler, Debouncer,
+    };
     use regex::Regex;
     use s3::primitives::ByteStream;
     use serde::Deserialize;
 
-    use crate::ux::Cli;
+    use crate::{ux::Cli, DEFAULT_EVENT_WINDOW_SECONDS};
 
     #[derive(Deserialize, Debug)]
-    pub struct Agents {
-        pub agents: Vec<Agent>,
-    }
+    pub struct Agents(Vec<Agent>);
 
     impl Agents {
-        pub fn from_config(filename: PathBuf) -> Self {
-            let contents = std::fs::read_to_string(filename).unwrap();
-            toml::from_str(&contents).unwrap()
+        pub fn agents(&self) -> Vec<Agent> {
+            self.0.clone()
         }
     }
 
-    #[derive(Builder, Deserialize, Debug)]
+    impl TryFrom<Cli> for Agents {
+        type Error = anyhow::Error;
+
+        fn try_from(value: Cli) -> Result<Self, Self::Error> {
+            let agents = if let Some(filename) = value.config {
+                let contents = std::fs::read_to_string(filename).unwrap();
+                toml::from_str(&contents).unwrap()
+            } else {
+                let agent = Agent {
+                    local_path: value.path,
+                    bucket_name: value.bucket,
+                    pattern: Some(value.pattern),
+                    profile_name: value.profile,
+                    region_name: value.region,
+                    delete: Some(value.delete),
+                    recursive: Some(value.recursive),
+                    window: Some(value.window),
+                };
+                vec![agent]
+            };
+            Ok(Self(agents))
+        }
+    }
+
+    #[derive(Builder, Deserialize, Debug, Clone)]
     #[builder(build_fn(error = "anyhow::Error"))]
     pub struct Agent {
         local_path: PathBuf,
@@ -87,6 +141,7 @@ mod s3sync {
         region_name: Option<String>,
         delete: Option<bool>,
         recursive: Option<bool>,
+        window: Option<u64>,
     }
 
     impl Agent {
@@ -102,6 +157,19 @@ mod s3sync {
         }
         pub fn delete(&self) -> bool {
             self.delete.unwrap_or(false)
+        }
+        pub fn window(&self) -> u64 {
+            self.window.unwrap_or(DEFAULT_EVENT_WINDOW_SECONDS)
+        }
+        pub fn watcher<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<impl Watcher> {
+            let mut watcher =
+                new_debouncer(std::time::Duration::from_secs(self.window()), tx).unwrap();
+            println!("Watch {:?}", self.local_path());
+            watcher
+                .watcher()
+                .watch(self.local_path(), self.recursive_mode())
+                .unwrap();
+            watcher
         }
         pub async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
             if let Ok(key) = self.object_key(file) {
@@ -159,58 +227,4 @@ mod s3sync {
             Ok(())
         }
     }
-
-    impl From<Cli> for Agent {
-        fn from(value: Cli) -> Self {
-            Self {
-                local_path: value.path,
-                bucket_name: value.bucket,
-                pattern: Some(value.pattern),
-                profile_name: value.profile,
-                region_name: value.region,
-                delete: Some(value.delete),
-                recursive: Some(value.recursive),
-            }
-        }
-    }
-}
-
-#[::tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt::init();
-
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    let agents = Cli::parse().config.map_or_else(
-        || vec![Agent::from(Cli::parse())],
-        |filename| s3sync::Agents::from_config(filename).agents,
-    );
-
-    let s3sync = &agents[0];
-    let window = Duration::from_secs(1);
-    let _watchers: Vec<Debouncer<FsEventWatcher>> = agents
-        .iter()
-        .map(|agent| {
-            let mut debouncer = notify_debouncer_mini::new_debouncer(window, tx.clone()).unwrap();
-            println!("Watch {:?}", agent.local_path());
-            debouncer
-                .watcher()
-                .watch(agent.local_path(), s3sync.recursive_mode())
-                .unwrap();
-            debouncer
-        })
-        .collect::<Vec<_>>();
-
-    for events in rx.into_iter().flatten() {
-        for event in events {
-            if event.kind == DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
-            && event.path.exists()
-            && event.path.is_file()
-            {
-                println!("Process: {event:?}");
-                s3sync.process_file(&event.path).await?;
-            }
-        }
-    }
-    Ok(())
 }
