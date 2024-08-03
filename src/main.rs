@@ -14,19 +14,14 @@ async fn main() -> Result<(), anyhow::Error> {
     let manager = s3sync::Manager::try_from(ux::Cli::parse())?;
     // Need a variable name to get the watchers to run
     let _watchers = manager
-        .agents
+        .watchers()
         .iter()
-        .map(|agent| agent.watcher().watch(tx.clone()))
+        .map(|watcher| watcher.watch(tx.clone()))
         .collect::<Vec<_>>();
 
     for events in rx.into_iter().flatten() {
         for event in events {
-            if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
-            && event.path.exists()
-            && event.path.is_file()
-            {
-                manager.process_event(&event).await?;
-            }
+            manager.process_event(&event).await?;
         }
     }
     Ok(())
@@ -100,6 +95,9 @@ mod s3sync {
     }
 
     impl Manager {
+        pub fn watchers(&self) -> Vec<&AgentWatcher> {
+            self.agents.iter().map(|agent| &agent.watcher).collect()
+        }
         pub async fn process_event(&self, event: &DebouncedEvent) -> Result<(), anyhow::Error> {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
             && event.path.exists()
@@ -189,24 +187,6 @@ mod s3sync {
     }
 
     impl Agent {
-        pub const fn watcher(&self) -> &AgentWatcher {
-            &self.watcher
-        }
-        pub fn delete(&self) -> bool {
-            self.delete.unwrap_or(false)
-        }
-        pub async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
-            if let Ok(key) = self.object_key(file) {
-                println!("Uploading: {self:?} - {key}");
-                self.upload_file(file, &key).await?;
-                println!("Successful: {self:?} - {file:?}");
-                if self.delete() {
-                    std::fs::remove_file(file)?;
-                    println!("Cleaned: {self:?} - {file:?}");
-                }
-            }
-            Ok(())
-        }
         fn object_key(&self, path: &Path) -> Result<String, anyhow::Error> {
             let key = path
                 .strip_prefix(self.watcher.local_path.clone())?
@@ -222,6 +202,18 @@ mod s3sync {
             } else {
                 Err(anyhow::Error::msg("Does not match pattern"))
             }
+        }
+        async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
+            if let Ok(key) = self.object_key(file) {
+                println!("Uploading: {self:?} - {key}");
+                self.upload_file(file, &key).await?;
+                println!("Successful: {self:?} - {file:?}");
+                if self.delete.unwrap_or(false) {
+                    std::fs::remove_file(file)?;
+                    println!("Cleaned: {self:?} - {file:?}");
+                }
+            }
+            Ok(())
         }
         async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
             let body = ByteStream::from_path(path).await?;
