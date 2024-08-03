@@ -12,24 +12,20 @@ async fn main() -> Result<(), anyhow::Error> {
     let (tx, rx) = std::sync::mpsc::channel();
 
     let manager = s3sync::Manager::try_from(ux::Cli::parse())?;
-
     // Need a variable name to get the watchers to run
     let _watchers = manager
         .agents
         .iter()
-        .map(|agent| agent.watcher(tx.clone()))
+        .map(|agent| agent.watcher().watch(tx.clone()))
         .collect::<Vec<_>>();
 
-    // TODO: send events to each agent
-    let s3sync = manager.agents.first().unwrap();
     for events in rx.into_iter().flatten() {
         for event in events {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
             && event.path.exists()
             && event.path.is_file()
             {
-                println!("Process: {event:?}");
-                s3sync.process_file(&event.path).await?;
+                manager.process_event(&event).await?;
             }
         }
     }
@@ -90,7 +86,7 @@ mod s3sync {
     use notify_debouncer_mini::{
         new_debouncer,
         notify::{FsEventWatcher, RecursiveMode},
-        DebounceEventHandler, Debouncer,
+        DebounceEventHandler, DebouncedEvent, Debouncer,
     };
     use regex::Regex;
     use s3::primitives::ByteStream;
@@ -103,6 +99,21 @@ mod s3sync {
         pub agents: Vec<Agent>,
     }
 
+    impl Manager {
+        pub async fn process_event(&self, event: &DebouncedEvent) -> Result<(), anyhow::Error> {
+            if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
+            && event.path.exists()
+            && event.path.is_file()
+            {
+                println!("Process: {event:?}");
+                for agent in &self.agents {
+                    agent.process_file(&event.path).await?;
+                }
+            }
+            Ok(())
+        }
+    }
+
     impl TryFrom<Cli> for Manager {
         type Error = anyhow::Error;
 
@@ -111,15 +122,18 @@ mod s3sync {
                 let contents = std::fs::read_to_string(filename)?;
                 Ok(toml::from_str(&contents)?)
             } else {
-                let agent = Agent {
+                let watcher = AgentWatcher {
                     local_path: value.path,
-                    bucket_name: value.bucket,
                     pattern: Some(value.pattern),
+                    recursive: Some(value.recursive),
+                    window: Some(value.window),
+                };
+                let agent = Agent {
+                    watcher,
+                    bucket_name: value.bucket,
                     profile_name: value.profile,
                     region_name: value.region,
                     delete: Some(value.delete),
-                    recursive: Some(value.recursive),
-                    window: Some(value.window),
                 };
                 Ok(Self {
                     agents: vec![agent],
@@ -130,19 +144,15 @@ mod s3sync {
 
     #[derive(Builder, Deserialize, Debug, Clone)]
     #[builder(build_fn(error = "anyhow::Error"))]
-    pub struct Agent {
+    pub struct AgentWatcher {
         local_path: PathBuf,
-        bucket_name: String,
         #[serde(with = "serde_regex", default)]
         pattern: Option<Regex>,
-        profile_name: Option<String>,
-        region_name: Option<String>,
-        delete: Option<bool>,
         recursive: Option<bool>,
         window: Option<u64>,
     }
 
-    impl Agent {
+    impl AgentWatcher {
         pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
         }
@@ -153,40 +163,57 @@ mod s3sync {
                 RecursiveMode::NonRecursive
             }
         }
-        pub fn delete(&self) -> bool {
-            self.delete.unwrap_or(false)
-        }
         pub fn window(&self) -> u64 {
             self.window.unwrap_or(DEFAULT_EVENT_WINDOW_SECONDS)
         }
-        pub fn watcher<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<FsEventWatcher> {
+        pub fn watch<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<FsEventWatcher> {
             let mut watcher =
                 new_debouncer(std::time::Duration::from_secs(self.window()), tx).unwrap();
-            println!("Watch {:?}", self.local_path());
             watcher
                 .watcher()
                 .watch(self.local_path(), self.recursive_mode())
                 .unwrap();
+            println!("Watching: {self:?}");
             watcher
+        }
+    }
+
+    #[derive(Builder, Deserialize, Debug, Clone)]
+    #[builder(build_fn(error = "anyhow::Error"))]
+    pub struct Agent {
+        watcher: AgentWatcher,
+        bucket_name: String,
+        profile_name: Option<String>,
+        region_name: Option<String>,
+        delete: Option<bool>,
+    }
+
+    impl Agent {
+        pub const fn watcher(&self) -> &AgentWatcher {
+            &self.watcher
+        }
+        pub fn delete(&self) -> bool {
+            self.delete.unwrap_or(false)
         }
         pub async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
             if let Ok(key) = self.object_key(file) {
-                println!("Uploading: {key}");
+                println!("Uploading: {self:?} - {key}");
                 self.upload_file(file, &key).await?;
-                println!("Upload successful: {file:?}");
+                println!("Successful: {self:?} - {file:?}");
                 if self.delete() {
                     std::fs::remove_file(file)?;
-                    println!("Cleaned-up file {file:?}");
+                    println!("Cleaned: {self:?} - {file:?}");
                 }
             }
             Ok(())
         }
         fn object_key(&self, path: &Path) -> Result<String, anyhow::Error> {
             let key = path
-                .strip_prefix(self.local_path())?
+                .strip_prefix(self.watcher.local_path.clone())?
                 .to_str()
                 .ok_or_else(|| anyhow!("Non-unicode path"))?;
             let applied_pattern = self
+                .watcher
                 .pattern
                 .clone()
                 .unwrap_or_else(|| Regex::new(r".*").unwrap());
