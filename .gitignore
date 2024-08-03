@@ -1,4 +1,4 @@
 .private
 /target
-sync.toml
+sync.yaml
 test_upload

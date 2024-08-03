@@ -72,7 +72,10 @@ mod ux {
 }
 
 mod s3sync {
-    use std::path::{Path, PathBuf};
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
 
     use anyhow::anyhow;
     use aws_config::{default_provider::region::DefaultRegionChain, Region};
@@ -95,8 +98,23 @@ mod s3sync {
     }
 
     impl Manager {
-        pub fn watchers(&self) -> Vec<&AgentWatcher> {
-            self.agents.iter().map(|agent| &agent.watcher).collect()
+        pub fn watchers(&self) -> Vec<AgentWatcher> {
+            let mut path_settings: HashMap<&PathBuf, PathSettings> = HashMap::new();
+            for agent in &self.agents {
+                if let Some(settings) = path_settings.get(agent.watcher.local_path()) {
+                    let settings = agent.watcher.settings.clone() + settings.clone();
+                    path_settings.insert(&agent.watcher.local_path, settings);
+                } else {
+                    path_settings.insert(&agent.watcher.local_path, agent.watcher.settings.clone());
+                }
+            }
+            path_settings
+                .into_iter()
+                .map(|(local_path, settings)| AgentWatcher {
+                    local_path: local_path.clone(),
+                    settings,
+                })
+                .collect()
         }
         pub async fn process_event(&self, event: &DebouncedEvent) -> Result<(), anyhow::Error> {
             if event.kind == notify_debouncer_mini::DebouncedEventKind::Any  // ignore AnyContinuous (i.e., still in progress)
@@ -118,16 +136,19 @@ mod s3sync {
         fn try_from(value: Cli) -> Result<Self, Self::Error> {
             if let Some(filename) = value.config {
                 let contents = std::fs::read_to_string(filename)?;
-                Ok(toml::from_str(&contents)?)
+                Ok(serde_yaml::from_str(&contents)?)
             } else {
-                let watcher = AgentWatcher {
-                    local_path: value.path,
-                    pattern: Some(value.pattern),
+                let path_settings = PathSettings {
                     recursive: Some(value.recursive),
                     window: Some(value.window),
                 };
+                let watcher = AgentWatcher {
+                    local_path: value.path,
+                    settings: path_settings,
+                };
                 let agent = Agent {
                     watcher,
+                    pattern: Some(value.pattern),
                     bucket_name: value.bucket,
                     profile_name: value.profile,
                     region_name: value.region,
@@ -144,18 +165,37 @@ mod s3sync {
     #[builder(build_fn(error = "anyhow::Error"))]
     pub struct AgentWatcher {
         local_path: PathBuf,
-        #[serde(with = "serde_regex", default)]
-        pattern: Option<Regex>,
-        recursive: Option<bool>,
-        window: Option<u64>,
+        settings: PathSettings,
     }
 
     impl AgentWatcher {
         pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
         }
+        pub fn watch<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<FsEventWatcher> {
+            let mut watcher =
+                new_debouncer(std::time::Duration::from_secs(self.settings.window()), tx).unwrap();
+            watcher
+                .watcher()
+                .watch(self.local_path(), self.settings.recursive_mode())
+                .unwrap();
+            println!("Watching: {self:?}");
+            watcher
+        }
+    }
+
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct PathSettings {
+        recursive: Option<bool>,
+        window: Option<u64>,
+    }
+
+    impl PathSettings {
+        pub fn recursive(&self) -> bool {
+            self.recursive.unwrap_or(false)
+        }
         pub fn recursive_mode(&self) -> RecursiveMode {
-            if self.recursive.unwrap_or(false) {
+            if self.recursive() {
                 RecursiveMode::Recursive
             } else {
                 RecursiveMode::NonRecursive
@@ -164,15 +204,30 @@ mod s3sync {
         pub fn window(&self) -> u64 {
             self.window.unwrap_or(DEFAULT_EVENT_WINDOW_SECONDS)
         }
-        pub fn watch<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<FsEventWatcher> {
-            let mut watcher =
-                new_debouncer(std::time::Duration::from_secs(self.window()), tx).unwrap();
-            watcher
-                .watcher()
-                .watch(self.local_path(), self.recursive_mode())
-                .unwrap();
-            println!("Watching: {self:?}");
-            watcher
+    }
+
+    impl std::ops::Add for PathSettings {
+        type Output = Self;
+
+        fn add(self, rhs: Self) -> Self::Output {
+            let window = std::cmp::min(self.window(), rhs.window());
+            let recursive = !matches!(
+                (self.recursive_mode(), rhs.recursive_mode()),
+                (RecursiveMode::NonRecursive, RecursiveMode::NonRecursive)
+            );
+            Self {
+                window: Some(window),
+                recursive: Some(recursive),
+            }
+        }
+    }
+
+    impl Default for PathSettings {
+        fn default() -> Self {
+            Self {
+                recursive: Some(false),
+                window: Some(DEFAULT_EVENT_WINDOW_SECONDS),
+            }
         }
     }
 
@@ -180,6 +235,8 @@ mod s3sync {
     #[builder(build_fn(error = "anyhow::Error"))]
     pub struct Agent {
         watcher: AgentWatcher,
+        #[serde(with = "serde_regex", default)]
+        pattern: Option<Regex>,
         bucket_name: String,
         profile_name: Option<String>,
         region_name: Option<String>,
@@ -193,7 +250,6 @@ mod s3sync {
                 .to_str()
                 .ok_or_else(|| anyhow!("Non-unicode path"))?;
             let applied_pattern = self
-                .watcher
                 .pattern
                 .clone()
                 .unwrap_or_else(|| Regex::new(r".*").unwrap());
