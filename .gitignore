@@ -1,2 +1,4 @@
 .private
 /target
+sync.yaml
+test_upload
