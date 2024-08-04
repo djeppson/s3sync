@@ -48,6 +48,9 @@ mod ux {
         /// S3 bucket to sync with
         #[arg(long, short)]
         pub bucket: Option<String>,
+        /// Prefix to prepend to the key
+        #[arg(long)]
+        pub prefix: Option<String>,
         /// Regex filter to match events
         #[arg(long)]
         pub pattern: Option<Regex>,
@@ -153,6 +156,7 @@ mod s3sync {
                     profile_name: value.profile,
                     region_name: value.region,
                     delete: value.delete,
+                    key_prefix: value.prefix,
                 };
                 Ok(Self {
                     agents: vec![agent],
@@ -238,6 +242,7 @@ mod s3sync {
         #[serde(with = "serde_regex", default)]
         pattern: Option<Regex>,
         bucket_name: Option<String>,
+        key_prefix: Option<String>,
         profile_name: Option<String>,
         region_name: Option<String>,
         delete: Option<bool>,
@@ -254,7 +259,11 @@ mod s3sync {
                 .clone()
                 .unwrap_or_else(|| Regex::new(r".*").unwrap());
             if applied_pattern.is_match(key) {
-                Ok(String::from(key))
+                let key = self
+                    .key_prefix
+                    .clone()
+                    .map_or(key.to_string(), |prefix| format!("{prefix}{key}"));
+                Ok(key)
             } else {
                 Err(anyhow::Error::msg("Does not match pattern"))
             }
