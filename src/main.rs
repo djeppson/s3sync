@@ -47,10 +47,10 @@ mod ux {
         pub path: PathBuf,
         /// S3 bucket to sync with
         #[arg(long, short)]
-        pub bucket: String,
+        pub bucket: Option<String>,
         /// Regex filter to match events
-        #[arg(long, default_value_t = Regex::new(".*").unwrap())]
-        pub pattern: Regex,
+        #[arg(long)]
+        pub pattern: Option<Regex>,
         /// AWS credential profile to use
         #[arg(long)]
         pub profile: Option<String>,
@@ -58,11 +58,11 @@ mod ux {
         #[arg(long)]
         pub region: Option<String>,
         /// Delete source file after successful upload
-        #[arg(long, short, default_value_t = false)]
-        pub delete: bool,
+        #[arg(long, short)]
+        pub delete: Option<bool>,
         /// Recursively sync the provided path
-        #[arg(short, long, default_value_t = false)]
-        pub recursive: bool,
+        #[arg(short, long)]
+        pub recursive: Option<bool>,
         /// Number of seconds to aggregate events
         #[arg(short, long, value_parser=window_seconds_range, default_value_t = DEFAULT_EVENT_WINDOW_SECONDS)]
         pub window: u64,
@@ -139,7 +139,7 @@ mod s3sync {
                 Ok(serde_yaml::from_str(&contents)?)
             } else {
                 let path_settings = PathSettings {
-                    recursive: Some(value.recursive),
+                    recursive: value.recursive,
                     window: Some(value.window),
                 };
                 let watcher = AgentWatcher {
@@ -148,11 +148,11 @@ mod s3sync {
                 };
                 let agent = Agent {
                     watcher,
-                    pattern: Some(value.pattern),
+                    pattern: value.pattern,
                     bucket_name: value.bucket,
                     profile_name: value.profile,
                     region_name: value.region,
-                    delete: Some(value.delete),
+                    delete: value.delete,
                 };
                 Ok(Self {
                     agents: vec![agent],
@@ -237,7 +237,7 @@ mod s3sync {
         watcher: AgentWatcher,
         #[serde(with = "serde_regex", default)]
         pattern: Option<Regex>,
-        bucket_name: String,
+        bucket_name: Option<String>,
         profile_name: Option<String>,
         region_name: Option<String>,
         delete: Option<bool>,
@@ -272,6 +272,10 @@ mod s3sync {
             Ok(())
         }
         async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
+            let bucket_name = self
+                .bucket_name
+                .clone()
+                .ok_or_else(|| anyhow::Error::msg("Bucket name is required"))?;
             let body = ByteStream::from_path(path).await?;
             let profile_name = self
                 .profile_name
@@ -292,7 +296,7 @@ mod s3sync {
             let client = s3::Client::new(&sdk_config);
             client
                 .put_object()
-                .bucket(self.bucket_name.clone())
+                .bucket(bucket_name)
                 .key(key)
                 .body(body)
                 .send()
