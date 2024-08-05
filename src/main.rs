@@ -7,8 +7,20 @@ const DEFAULT_EVENT_WINDOW_SECONDS: u64 = 5;
 
 #[::tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt::init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        .add_directive("aws_config=warn".parse()?)
+        .add_directive("aws_smithy_runtime=warn".parse()?);
+    let subscriber = tracing_subscriber::fmt()
+        .pretty()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(true)
+        .with_target(false)
+        .with_env_filter(filter)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
 
+    tracing::debug!("Setting up channel");
     let (tx, rx) = std::sync::mpsc::channel();
 
     let manager = s3sync::Manager::try_from(ux::Cli::parse())?;
@@ -124,7 +136,7 @@ mod s3sync {
             && event.path.exists()
             && event.path.is_file()
             {
-                println!("Process: {event:?}");
+                tracing::debug!("Process: {event:?}");
                 for agent in &self.agents {
                     agent.process_file(&event.path).await?;
                 }
@@ -183,7 +195,7 @@ mod s3sync {
                 .watcher()
                 .watch(self.local_path(), self.settings.recursive_mode())
                 .unwrap();
-            println!("Watching: {self:?}");
+            tracing::info!("Watching: {self:?}");
             watcher
         }
     }
@@ -254,32 +266,42 @@ mod s3sync {
                 .strip_prefix(self.watcher.local_path.clone())?
                 .to_str()
                 .ok_or_else(|| anyhow!("Non-unicode path"))?;
+            tracing::debug!("Proposed object key: '{key}'");
             let applied_pattern = self
                 .pattern
                 .clone()
                 .unwrap_or_else(|| Regex::new(r".*").unwrap());
+            tracing::debug!("Pattern to match: '{applied_pattern}'");
             if applied_pattern.is_match(key) {
                 let key = self
                     .key_prefix
                     .clone()
                     .map_or(key.to_string(), |prefix| format!("{prefix}{key}"));
+                tracing::debug!("Final object key '{key}'");
                 Ok(key)
             } else {
+                tracing::debug!("Path does not match pattern");
                 Err(anyhow::Error::msg("Does not match pattern"))
             }
         }
+
+        #[tracing::instrument]
         async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
             if let Ok(key) = self.object_key(file) {
-                println!("Uploading: {self:?} - {key}");
+                tracing::debug!("Processing");
                 self.upload_file(file, &key).await?;
-                println!("Successful: {self:?} - {file:?}");
                 if self.delete.unwrap_or(false) {
-                    std::fs::remove_file(file)?;
-                    println!("Cleaned: {self:?} - {file:?}");
+                    Self::delete_source(file)?;
+                } else {
+                    tracing::debug!("Skip removal");
                 }
+            } else {
+                tracing::debug!("Skip processing");
             }
             Ok(())
         }
+
+        #[tracing::instrument]
         async fn upload_file(&self, path: &Path, key: &str) -> Result<(), anyhow::Error> {
             let bucket_name = self
                 .bucket_name
@@ -310,6 +332,14 @@ mod s3sync {
                 .body(body)
                 .send()
                 .await?;
+            tracing::info!("File uploaded");
+            Ok(())
+        }
+
+        #[tracing::instrument]
+        fn delete_source(path: &Path) -> Result<(), anyhow::Error> {
+            std::fs::remove_file(path)?;
+            tracing::info!("Source file removed");
             Ok(())
         }
     }
