@@ -261,6 +261,7 @@ mod s3sync {
     }
 
     impl Agent {
+        #[tracing::instrument]
         fn object_key(&self, path: &Path) -> Result<String, anyhow::Error> {
             let key = path
                 .strip_prefix(self.watcher.local_path.clone())?
