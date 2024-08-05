@@ -7,7 +7,8 @@ const DEFAULT_EVENT_WINDOW_SECONDS: u64 = 5;
 
 #[::tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
         .add_directive("aws_config=warn".parse()?)
         .add_directive("aws_smithy_runtime=warn".parse()?);
     let subscriber = tracing_subscriber::fmt()
