@@ -99,7 +99,7 @@ mod s3sync {
     use derive_builder::Builder;
     use notify_debouncer_mini::{
         new_debouncer,
-        notify::{FsEventWatcher, RecursiveMode},
+        notify::{RecommendedWatcher, RecursiveMode},
         DebounceEventHandler, DebouncedEvent, Debouncer,
     };
     use regex::Regex;
@@ -189,7 +189,7 @@ mod s3sync {
         pub const fn local_path(&self) -> &PathBuf {
             &self.local_path
         }
-        pub fn watch<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<FsEventWatcher> {
+        pub fn watch<F: DebounceEventHandler>(&self, tx: F) -> Debouncer<RecommendedWatcher> {
             let mut watcher =
                 new_debouncer(std::time::Duration::from_secs(self.settings.window()), tx).unwrap();
             watcher
