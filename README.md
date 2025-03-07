@@ -15,19 +15,29 @@ Issues:
 ### Usage: 
 
 ```
-Usage: s3sync [OPTIONS] --bucket <BUCKET>
+Usage: s3sync [OPTIONS]
 
 Options:
-  -p, --path <PATH>             Local file path to sync [default: /Users/darrenjeppson/projects/s3sync]
-      --pattern <PATTERN>       Regex pattern to apply to filenames [default: .*]
-  -b, --bucket <BUCKET>         S3 bucket to sync with
-      --profile <PROFILE_NAME>  AWS credential profile to use [default: default]
-      --region <REGION_NAME>    AWS region override
-  -d, --delete                  Delete source file after successful upload
-  -r, --recursive               Recursively sync the provided path
-  -w, --window <WINDOW>         Number of seconds to aggregate events [default: 10]
-  -h, --help                    Print help
+  -p, --path <PATH>            Local file path to sync [default: /home/jeppson]
+  -b, --bucket <BUCKET>        S3 bucket to sync with
+      --prefix <PREFIX>        Prefix to prepend to the key
+      --pattern <PATTERN>      Regex filter to match events
+      --profile <PROFILE>      AWS credential profile to use
+      --region <REGION>        AWS region override
+  -d, --delete <DELETE>        Delete source file after successful upload [possible values: true, false]
+  -r, --recursive <RECURSIVE>  Recursively sync the provided path [possible values: true, false]
+  -w, --window <WINDOW>        Number of seconds to aggregate events [default: 5]
+      --config <CONFIG>        
+  -h, --help                   Print help
 ```
+
+
+## Run in Xfce (Linux) at startup:
+* Create/use config file and put it in place (example: [sync.yaml](./sync.yaml))
+* In the "Session and Startup" app:
+  * Name: s3sync
+  * Command: `/usr/local/bin/s3sync --config /home/jeppson/.config/sync.yaml`
+  * Trigger: on login
 
 
 ## Run on Mac at startup:
