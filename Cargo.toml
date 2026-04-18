@@ -18,3 +18,4 @@ serde_yaml = "0.9.34"
 tokio = { version = "1.35.1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tryhard = "0.5.2"

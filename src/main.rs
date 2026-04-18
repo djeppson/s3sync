@@ -91,6 +91,7 @@ mod s3sync {
     use std::{
         collections::HashMap,
         path::{Path, PathBuf},
+        time::Duration,
     };
 
     use anyhow::anyhow;
@@ -139,7 +140,13 @@ mod s3sync {
             {
                 tracing::debug!("Process: {event:?}");
                 for agent in &self.agents {
-                    agent.process_file(&event.path).await?;
+                    let response = tryhard::retry_fn(|| agent.process_file(&event.path))
+                        .retries(3)
+                        .exponential_backoff(Duration::from_secs(1))
+                        .await;
+                    if response.is_err() {
+                        tracing::warn!("Agent {agent:?} could not process event {:?}", &event.path)
+                    }
                 }
             }
             Ok(())
@@ -265,7 +272,8 @@ mod s3sync {
         #[tracing::instrument]
         fn object_key(&self, path: &Path) -> Result<String, anyhow::Error> {
             let key = path
-                .strip_prefix(self.watcher.local_path.clone())?
+                .strip_prefix(self.watcher.local_path.clone())
+                .map_err(|_| anyhow::Error::msg("Does not match watcher local path"))?
                 .to_str()
                 .ok_or_else(|| anyhow!("Non-unicode path"))?;
             tracing::debug!("Proposed object key: '{key}'");
@@ -282,7 +290,6 @@ mod s3sync {
                 tracing::debug!("Final object key '{key}'");
                 Ok(key)
             } else {
-                tracing::debug!("Path does not match pattern");
                 Err(anyhow::Error::msg("Does not match pattern"))
             }
         }
@@ -290,15 +297,13 @@ mod s3sync {
         #[tracing::instrument]
         async fn process_file(&self, file: &Path) -> Result<(), anyhow::Error> {
             if let Ok(key) = self.object_key(file) {
-                tracing::debug!("Processing");
+                tracing::debug!("{self:?} processing {key}");
                 self.upload_file(file, &key).await?;
                 if self.delete.unwrap_or(false) {
                     Self::delete_source(file)?;
                 } else {
                     tracing::debug!("Skip removal");
                 }
-            } else {
-                tracing::debug!("Skip processing");
             }
             Ok(())
         }
@@ -309,6 +314,7 @@ mod s3sync {
                 .bucket_name
                 .clone()
                 .ok_or_else(|| anyhow::Error::msg("Bucket name is required"))?;
+            tracing::info!("Preparing upload to {bucket_name}");
             let body = ByteStream::from_path(path).await?;
             let profile_name = self
                 .profile_name
@@ -321,6 +327,10 @@ mod s3sync {
                     .region()
                     .await
             });
+            tracing::debug!(
+                "Creating client: profile {profile_name}, region: {:?}",
+                region
+            );
             let sdk_config = aws_config::from_env()
                 .region(region)
                 .profile_name(profile_name)
@@ -334,7 +344,7 @@ mod s3sync {
                 .body(body)
                 .send()
                 .await?;
-            tracing::info!("File uploaded");
+            tracing::info!("File {path:?} uploaded");
             Ok(())
         }
 
